@@ -1,0 +1,73 @@
+---
+title: "quantitative_analysis"
+output: pdf_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r library, message=FALSE}
+library(dplyr)
+library(tidyr)
+library(ggplot2)
+```
+
+```{r read and arrange data}
+quan_v2 <- read.csv("quantitative_v2.csv")
+quan_v2 <- select(quan_v2, 1:10) %>% na.omit()
+quan_v2 <- quan_v2 %>% 
+  group_by(fish, date, trial) %>% 
+  mutate(id = cur_group_id()) %>% 
+  ungroup() %>% 
+  relocate(id, .before = fish)
+str(quan_v2)
+```
+
+```{r distribution}
+ggplot(data = quan_v2, mapping = aes(x = frame, y = position, color = lobe, shape = fish)) +
+  geom_point()
+# position centered around -0.5
+
+ggplot(data = quan_v2, mapping = aes(x = frame, y = position, color = vertical_direction)) +
+  geom_point()
+
+ggplot(data = quan_v2, mapping = aes(x = vertical_direction, y = position, color = lobe)) + 
+  geom_boxplot() +
+  geom_jitter(alpha = 0.5) # no difference
+
+ggplot(data = quan_v2, mapping = aes(x = as.factor(tail_beat), y = position, color = lobe)) +
+  geom_boxplot() # no difference
+```
+
+```{r plot phase shift}
+# (playback) frame rate of mp4 video == 10 fps
+# (recording) frame rate of cine video == 200 fps
+# quan_v2 <- mutate(quan_v2, phase_shift_sec = phase_shift/200) # calculate phase shift in second
+
+quan_v2 <- quan_v2 %>%
+  group_by(id) %>% 
+  mutate(tailbeat_frame = max(frame)-min(frame), # frame range of 3 tail beats
+         ratio = phase_shift/tailbeat_frame) %>% 
+  ungroup()
+
+# when phase shift < 0, dorsal-leading; when phase shift > 0, ventral-leading
+
+phase_shift_summary <- quan_v2 %>% 
+  group_by(vertical_direction) %>% 
+  summarize(mean = mean(ratio), sd = sd(ratio), max = max(ratio), min = min(ratio))
+
+ggplot(data = quan_v2, mapping = aes(x = vertical_direction, y = ratio)) + 
+  geom_boxplot() +
+  labs(x = "Vertical direction", y = "Ratio of phase shift") +
+  scale_x_discrete(labels = c("Downward", "Horizontal", "Upward")) +
+  theme_bw()
+
+```
+
+```{r compare phase shift}
+two_way_anova <- aov(ratio ~ vertical_direction, data = quan_v2)
+summary(two_way_anova)
+TukeyHSD(two_way_anova)
+```
+

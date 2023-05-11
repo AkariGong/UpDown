@@ -1,0 +1,36 @@
+---
+title: "R Notebook"
+output: html_notebook
+---
+
+```{r}
+library(tidyverse)
+library(here)
+library(knitr)
+```
+
+```{r}
+datadir <- here('Data','5_Raw3D')
+processfiledir <- here('Data', '5_Raw3D')
+```
+
+```{r}
+datafiles <- list.files(datadir, pattern = "*.csv")
+datafiles
+```
+
+```{r}
+processing_code_template <- here('Code', '1-Process_3D_data_1file.Rmd')
+```
+
+```{r}
+for (file in datafiles) {
+  output_file <- here(processfiledir, paste0(tools::file_path_sans_ext(file), '.html'))
+  
+  rmarkdown::render(processing_code_template, params = list(
+    filename = file),
+    output_format = 'html_document',
+    output_file = output_file)
+}
+```
+

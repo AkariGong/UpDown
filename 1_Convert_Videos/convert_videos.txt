@@ -1,0 +1,1 @@
+for /f "tokens=1 delims=." %a in ('dir /B *.cine') do ffmpeg -r 10 -i "%a.cine" -c:v libx264 -preset slow -crf 20 -pix_fmt yuvj420p "%a.mp4"

@@ -1,0 +1,752 @@
+---
+title: "lateral_angles"
+output: html_document
+---
+
+This file is to calculate the angle of fish among upward, forward, and downward swimming based on just the lateral view.
+
+```{r library, message=FALSE}
+library(dplyr)
+library(ggplot2)
+library(data.table)
+library(tidyverse)
+library(lubridate)
+library(signal)
+library(patchwork)
+library(plotly)
+```
+
+
+## All video data files
+*START FROM HERE*
+```{r customize read-in function}
+read_lateral_data <- function(filename) {
+  dlccolnames <- read_csv(filename, col_names = FALSE, skip = 1, n_max = 2)
+  
+  dlccolnames <- paste(dlccolnames[1,], dlccolnames[2,], sep = '_')
+  dlccolnames[[1]] <- 'frame'
+  
+  data <- read_csv(filename, skip = 3, col_names = FALSE)
+  colnames(data) <- dlccolnames 
+  
+  filedate <- str_extract(filename, '20\\d{6}')
+  fishid <- str_extract(filename, 'ms\\d{2}')
+  trialnum <- str_extract(filename, 'trial\\d+_') %>%
+    str_extract('\\d+') %>%
+    as.numeric()
+
+  data %>%
+    mutate(date = filedate,
+           fish = fishid,
+           trial = trialnum)
+}
+```
+
+read_lateral_data(test_file)
+
+```{r}
+all_videos <- 
+  list.files(pattern = "*.csv")
+all_videos_df <- data.frame(all_videos)
+```
+
+1:8 20211013_ms03
+9:25 20211014_ms04
+26:36 20211028_ms03
+37:46 20211029_ms05
+47 20211109_ms04
+48:56 20211110_ms05
+57:63 20220706_ms02
+64:76 20220707_ms02
+77:88 20220708_ms02
+89:105 20220728_ms06
+106:115 20220729_ms06
+```{r read all data files, message=FALSE, show_col_types = FALSE}
+data <-
+  all_videos[48:56] %>%
+    map_dfr(~read_lateral_data(.)) %>%
+  mutate(date = ymd(date))
+
+```
+
+```{r}
+data %>% select(date, fish, trial) %>% unique()
+```
+
+```{r read in trial_info_v2}
+# trial_info_v2 has the range of frames that include both points and left eye and strip
+
+trial_info_v2 <- read_csv("/Users/minggong/Documents/Tytell_Lab/Project2/Data/Qualitative/trial_info_v2.csv")
+# change date format to year_month_date
+trial_info_v2$date <- as.Date(trial_info_v2$date, format = "%m_%d_%Y")
+trial_info_v2$date <- ymd(trial_info_v2$date)
+
+# change starting and ending frame into time in second
+trial_info_v2$start_full_range <- trial_info_v2$start_full_range/200
+trial_info_v2$end_full_range <- trial_info_v2$end_full_range/200
+```
+
+```{r}
+# combine all trial information with the big data set
+data <- left_join(data, trial_info_v2, by = c("fish", "date", "trial"))
+```
+
+
+```{r}
+# change frame into time in seconds
+data <- data %>% 
+  mutate(time = frame/200, .after = frame)
+```
+
+
+```{r}
+# Check whether ID, date, fish, and trial match with each other.
+# The ID here could be different from the row number in all_videos_df, because trial_info_v2 includes more trials.
+data %>% select(ID, date, fish, trial, vertical_direction) %>% unique()
+```
+
+
+```{r}
+datalong <-
+  data %>%
+  pivot_longer(cols = caudal_dorsal_top_x:hyoid_likelihood, 
+               names_to = c('point', '.value'),
+               names_pattern = "(.+)_(x|y|likelihood)")
+```
+
+```{r define replace na function}
+spline_replace_na <- function(y) {
+  good <- !is.na(y)
+  x <- seq_along(y)
+  
+  if (all(good)) {
+    y
+  } else {
+    span <- rep(FALSE, length(y))
+    
+    a <- which.max(good)
+    b <- length(y) + 1 - which.max(rev(good))
+    span[a:b] <- TRUE
+  
+    ys <- rep(NA_real_, length(y))
+    sp <- spline(x[good], y[good], xout = x[span])
+  
+    ys[span] <- sp$y
+    ys
+  }
+}
+```
+*YOU CAN JUMP TO NEXT "RUN THIS" CHUNK*
+
+
+```{r define find_jump function}
+# find_jump <- function(x, y) {
+#   dx = x - lag(x)
+#   dy = y - lag(y)
+#   
+#   summary <- summarise(
+#     mean_dx = mean(dx),
+#     mean_dy = mean(dy),
+#     median_dx = quantile(dx, 0.5),
+#     median_dy = quantile(dy, 0.5),
+#     threshold_dx = quantile(dx, 0.90, na.rm = T),
+#     threshold_dy = quantile(dy, 0.90, na.rm = T))
+#   
+#   
+#   if (dx <= summary$threshold_dx) {
+#     x = x
+#   } else {
+#     x = NA_real_
+#   }
+#   
+#   if (dy <= summary$threshold_dy) {
+#     y = y
+#   } else {
+#     y = NA_real_
+#   }
+#   
+# }
+```
+
+
+
+```{r}
+# Histogram: Plot the distribution of dx and dy to find the best threshold
+datalong %>% 
+  dplyr::filter(trial == 57) %>% 
+  dplyr::filter(likelihood > 0.99) %>% 
+  dplyr::select(12:15) %>% 
+  group_by(point) %>% 
+  mutate(dx = x-lag(x), 
+         dy = y-lag(y)) %>%
+  plot_ly(x = ~dy, type = "histogram", histnorm = "probability")
+```
+
+```{r}
+# Boxplot: Plot the distribution of dx and dy to find the best threshold
+boxplot_dx_dy <- datalong %>% 
+  dplyr::filter(trial == 5) %>% 
+  dplyr::filter(likelihood > 0.99) %>% 
+  dplyr::select(12:15) %>% 
+  group_by(point) %>% 
+  mutate(dx = x-lag(x), 
+         dy = y-lag(y)) %>%
+  plot_ly(x = ~point, y = ~dx, type = "box", name = "dx") %>% 
+  add_trace(y = ~dy, type = "box", name = "dy")
+
+print(boxplot_dx_dy)
+
+```
+
+```{r}
+# Find threshold number: when likelihood >0.99, what are the mean differences between points?
+datalong %>% 
+  dplyr::filter(trial == 3) %>% 
+  dplyr::filter(likelihood > 0.99) %>% 
+  select(12:15) %>% 
+  group_by(point) %>% 
+  mutate(dx = x-lag(x), 
+         dy = y-lag(y)) %>%
+  na.omit() %>% 
+  summarize(mean_dx_good = mean(dx),
+            mean_dy_good = mean(dy))
+
+datalong %>% 
+  dplyr::filter(trial == 3) %>% 
+  dplyr::filter(likelihood < 0.99) %>% 
+  select(12:15) %>% 
+  group_by(point) %>% 
+  mutate(dx = x-lag(x), 
+         dy = y-lag(y)) %>%
+  na.omit() %>% 
+  summarize(mean_dx = mean(dx),
+            mean_dy = mean(dy))
+
+```
+
+
+```{r}
+# test the spline_replace_NA function and find_jump function
+datalong %>% 
+  dplyr::filter(fish == 'ms03' & trial == 1) %>% 
+  dplyr::filter(point == 'left_eye') %>%
+  ggplot(aes(x = time)) + 
+  geom_line(aes(y = x), color = 'green') + 
+  geom_line(aes(y = y), color = 'blue')
+
+datalong %>% 
+  dplyr::filter(fish == 'ms03' & trial == 1) %>%
+  mutate(x = if_else(likelihood > 0.98, x, NA_real_),
+         y = if_else(likelihood > 0.98, y, NA_real_)) %>%
+  dplyr::filter(point == 'left_eye') %>%
+  mutate(is_jump = find_jump(x, y),
+         x = if_else(is_jump, NA_real_, x),
+         y = if_else(is_jump, NA_real_, y)) %>%
+  mutate(xs = spline_replace_na(x), 
+         ys = spline_replace_na(y)) %>%
+  ggplot(aes(x = time)) +
+  geom_line(aes(y = xs), color = 'red') +
+  geom_line(aes(y = x), color = 'green') +
+  geom_line(aes(y = ys), color = 'red') +
+  geom_line(aes(y = y), color = 'blue')
+
+```
+
+
+```{r}
+## Old chunk of the original codes
+# datalong <-
+#   datalong %>%
+#   mutate(x = if_else(likelihood > 0.98, x, NA_real_),
+#          y = if_else(likelihood > 0.98, y, NA_real_)) %>%
+#   mutate(is_jump = find_jump(x, y, threshold = 0.5),
+#          x = if_else(is_jump, NA_real_, x),
+#          y = if_else(is_jump, NA_real_, y)) %>%
+#   group_by(point) %>% 
+#   rename(x0 = x, y0 = y) %>%
+#   mutate(x = spline_replace_na(x0),
+#          y = spline_replace_na(y0))
+  
+```
+
+
+
+
+```{r}
+datalong <- datalong %>% filter(point != "spiny_dorsal_ant_base")
+```
+
+```{r}
+## RUN THIS
+# filter points of high likelihood
+datalong <- datalong %>% 
+  mutate(x = if_else(likelihood > 0.98, x, NA_real_),
+         y = if_else(likelihood > 0.98, y, NA_real_)) %>% 
+  group_by(ID, point) %>% 
+  mutate(dx = x - lag(x),
+         dy = y - lag(y)) %>% 
+  ungroup()
+```
+
+```{r}
+## RUN THIS
+# calculate threshold for points of high likelihood
+thres_summary <- datalong %>% 
+  group_by(ID, point) %>% 
+  summarise(mean_dx = mean(na.omit(dx)),
+            mean_dy = mean(na.omit(dy)),
+            median_dx = quantile(dx, 0.5, na.rm = T),
+            median_dy = quantile(dy, 0.5, na.rm = T),
+            threshold_dx = quantile(dx, 0.90, na.rm = T),
+            threshold_dy = quantile(dy, 0.90, na.rm = T))
+
+datalong <- datalong %>% left_join(thres_summary %>% select(ID, point, threshold_dx, threshold_dy), by = c("ID", "point"))
+```
+
+
+```{r}
+## RUN THIS
+# use the threshold to filter the jump points again
+# apply the spline_replace_NA function on the big data set to replace NA points
+datalong <- datalong %>% 
+  group_by(ID, point) %>% 
+  mutate(x = if_else(dx > threshold_dx, NA_real_, x),
+         y = if_else(dy > threshold_dy, NA_real_, y)) %>% 
+  rename(xs = x, ys = y) %>% 
+  mutate(x = spline_replace_na(xs),
+         y = spline_replace_na(ys))
+```
+
+
+```{r}
+datalong %>% 
+  dplyr::filter(point == 'left_eye') %>%
+  ggplot(aes(x = time)) +
+    geom_line(aes(y = x), color = 'red') +
+    geom_line(aes(y = xs), color = 'green') +
+    geom_line(aes(y = y), color = 'red') +
+    geom_line(aes(y = ys), color = 'blue') +
+    facet_wrap(~ID)
+```
+
+
+```{r}
+data <- datalong %>%
+  pivot_wider(names_from = 'point', names_glue = '{point}_{.value}', 
+              values_from = c(xs, ys, x, y, likelihood, dx, dy, threshold_dx, threshold_dy))
+```
+
+```{r subset points}
+points <- data %>% select(ID,
+                          date, 
+                          fish, 
+                          trial,
+                          vertical_direction,
+                          frame,
+                          time,
+                          start_full_range,
+                          end_full_range,
+                          left_eye_x,
+                          left_eye_y,
+                          #spiny_dorsal_ant_base_x,
+                          #spiny_dorsal_ant_base_y,
+                          #hyoid_x,
+                          #hyoid_y,
+                          left_lateral_strip_x,
+                          left_lateral_strip_y,
+                          peduncle_middle_x,
+                          peduncle_middle_y)
+```
+
+
+```{r customize function to calculate angle}
+angle <- function(x1, y1, x2, y2){
+  angle <- atan2((y2 - y1), (x2 - x1)) * 180/pi
+  return(angle)
+}
+
+# angle(points$left_eye_x, points$left_lateral_strip_x, points$left_eye_y, points$left_lateral_strip_y)  # test
+```
+
+```{r}
+# calculate angles of the line based on two points
+points <- points %>% mutate(eye_strip_angle_deg = angle(left_eye_x, left_eye_y, left_lateral_strip_x, left_lateral_strip_y),
+                            strip_peduncle_angle_deg = angle(peduncle_middle_x, peduncle_middle_y, left_lateral_strip_x, left_lateral_strip_y),
+                            eye_peduncle_angle_deg = angle(peduncle_middle_x, peduncle_middle_y, left_eye_x, left_eye_y))
+                            #eye_dorsalant_angle_deg = angle(left_eye_x, left_eye_y, spiny_dorsal_ant_base_x, spiny_dorsal_ant_base_y),
+                            #eye_hyoid_angle_deg = angle(left_eye_x, left_eye_y, hyoid_x, hyoid_y),
+                            #dorsalant_hyoid_angle_deg = angle(spiny_dorsal_ant_base_x, spiny_dorsal_ant_base_y, hyoid_x, hyoid_y))
+
+```
+
+
+
+```{r}
+# plot angle vs frame in one specified trial
+
+color_1 <- c("eye_strip_angle_deg" = "blue",
+           "strip_peduncle_angle_deg" = "cyan",
+           "eye_peduncle_angle_deg" = "deep sky blue")
+           #"eye_dorsalant_angle_deg" = "deep pink",
+           #"eye_hyoid_angle_deg" = "red",
+           #"dorsalant_hyoid_angle_deg" = "maroon")
+
+points %>% 
+  dplyr::filter(ID == 60) %>%
+  mutate(strip_peduncle_angle_deg = unwrap(strip_peduncle_angle_deg*pi/180)*180/pi) %>%  
+  ggplot(aes(x=time, shape=vertical_direction)) +
+  geom_point(aes(y=eye_strip_angle_deg, color ='eye_strip_angle_deg')) +
+  geom_point(aes(y=strip_peduncle_angle_deg, color = 'strip_peduncle_angle_deg')) +
+  geom_point(aes(y=eye_peduncle_angle_deg, color = 'eye_peduncle_angle_deg')) +
+  #geom_point(aes(y=eye_dorsalant_angle_deg, color = 'eye_dorsalant_angle_deg')) +
+  #geom_point(aes(y=eye_hyoid_angle_deg, color = 'eye_hyoid_angle_deg')) +
+  #geom_point(aes(y=dorsalant_hyoid_angle_deg, color = 'dorsalant_hyoid_angle_deg')) +
+  labs(x = "Time (sec)", y = "Angle relative to horizontal plane") +
+  scale_color_manual(values = color_1)
+
+```
+
+```{r}
+# use eye-strip angle as body angle
+body_angle_1 <- points %>% 
+  select(ID, date, fish, trial, vertical_direction, frame, time, eye_strip_angle_deg)
+# body_angle_1 <- body_angle_1[!(is.na(body_angle_1$eye_strip_angle_deg)), ]
+```
+
+
+```{r}
+# customize the filter
+tailbeatfreq <- 1
+sampfreq <- 1/0.005
+## butterfilt <- signal::butter(9, 4*tailbeatfreq / (0.5*sampfreq), "low")  # filter 1
+butterfilt <- signal::butter(9, 2*tailbeatfreq / (0.5*sampfreq), "low")  # filter 2 (smoother than filter 1)
+
+# Deal with the edge effect of the butterfilt
+EndEffect <- function(filt,x) {
+  x <- x[!is.na(x)]
+  signal::filtfilt(filt,c(rev(x),x,rev(x)))[(length(x) + 1):(2 * length(x))]
+}
+```
+
+
+```{r}
+# smooth body angle & calculate angular velocity
+body_angle_1 <- body_angle_1 %>%
+  dplyr::filter(!is.na(eye_strip_angle_deg)) %>% 
+  group_by(ID) %>% 
+  mutate(unwrap_angle = unwrap(eye_strip_angle_deg*pi/180)*180/pi,
+         original_angle_smooth = EndEffect(butterfilt, unwrap_angle),
+         body_angle = unwrap_angle-unwrap_angle[1],  # subtract baseline
+         body_angle_smooth = EndEffect(butterfilt, body_angle),
+         body_angle_smooth_rad = body_angle_smooth*pi/180,
+         ang_vel_rads = (lead(body_angle_smooth_rad) - lag(body_angle_smooth_rad))/(2*0.005))
+
+
+body_angle_1 <- body_angle_1 %>%
+  dplyr::group_by(ID) %>%
+  fill(c(ang_vel_rads), .direction = "downup") %>%
+  mutate(ang_vel_smooth_rads = EndEffect(butterfilt, ang_vel_rads)) %>% 
+  dplyr::ungroup()
+
+```
+
+```{r}
+# compare the smooth data and the original data
+body_angle_1 %>% 
+  dplyr::filter(ID == 60) %>%
+  ggplot(aes(x=time, shape=vertical_direction)) +
+  geom_point(aes(y=body_angle, color ='body_angle')) +
+  geom_point(aes(y=body_angle_smooth, color = 'body_angle_smooth')) +
+  labs(x = "Time (sec)", y = "Body angle (deg)")
+```
+
+```{r}
+# body_angle_1 %>% 
+#   dplyr::filter(ID == ) %>%
+#   ggplot(aes(x=time, shape=vertical_direction)) +
+#   geom_point(aes(y=ang_vel_rads_1, color ='ang_vel_rads_1')) +
+#   geom_point(aes(y=ang_vel_smooth_rads_1, color = 'ang_vel_smooth_rads_1')) +
+#   geom_point(aes(y=ang_vel_rads_2, color ='ang_vel_rads_2')) +
+#   geom_point(aes(y=ang_vel_smooth_rads_2, color = 'ang_vel_smooth_rads_2')) +
+#   labs(x = "Time (sec)", y = "Angular velocity")
+```
+
+```{r}
+# plot eye-strip angle as body angle
+ggplot(body_angle_1, aes(x = time, y = original_angle_smooth, color = vertical_direction)) +
+  geom_point() +
+  facet_wrap(~ID, scales = "free") +
+  labs(x = "Time (sec)", y = "Original Body angle (eye-strip) (deg)")
+```
+
+```{r}
+# plot eye-strip angle as body angle
+ggplot(body_angle_1, aes(x = time, y = body_angle_smooth, color = vertical_direction)) +
+  geom_point() +
+  facet_wrap(~ID, scales = "free") +
+  labs(x = "Time (sec)", y = "Body angle (eye-strip) (deg)")
+
+```
+
+
+```{r}
+# plot eye-strip angular velocity
+ggplot(body_angle_1, aes(x = time)) +
+  geom_point(aes(y = ang_vel_rads, color = 'ang_vel_rads')) +
+  geom_point(aes(y = ang_vel_smooth_rads, color = 'smooth')) +
+  facet_wrap(~ID, scales = "free") +
+  labs(x = "Time (sec)", y = "Angular velocity (eye-strip) (rad/s)")
+```
+
+
+
+*CALCULATE SPEED*
+```{r horizontal and vertical speed}
+# calculate horizontal speed and vertical speed based on the peduncle middle point
+# unit should be BL/s
+
+speed <- points
+
+fish_length <- points %>% 
+  group_by(ID) %>% 
+  dplyr::filter(frame > 300 & frame < 500) %>%  # This value may varies among different sets of data.
+  mutate(fish_length = mean(abs(left_eye_x - peduncle_middle_x), na.rm = TRUE)) %>% 
+  ungroup() %>% 
+  select(ID, date, fish, trial, fish_length) %>% 
+  unique() %>% 
+  mutate(mean_fish_length = mean(fish_length, na.rm = TRUE))
+
+speed <- points %>% 
+  group_by(ID) %>%
+  mutate(left_eye_vx = (lead(left_eye_x) - lag(left_eye_x))/(2*0.005),
+         left_eye_vx_BL = left_eye_vx/fish_length$mean_fish_length[1],  # calculate the ratio with the mean_fish_length
+         left_eye_vy = (lead(left_eye_y) - lag(left_eye_y))/(2*0.005),
+         left_eye_vy_BL = left_eye_vy/fish_length$mean_fish_length[1])# %>% 
+#  fill(c(left_eye_vx_BL, left_eye_vy_BL), .direction = "downup")
+
+#speed <- speed[!is.na(speed$left_eye_vx_BLs),]
+#speed <- speed[!is.na(speed$left_eye_vy_BLs),]
+
+```
+
+
+```{r}
+# Deal with the edge effect of the butterfilt
+EndEffectDF <- function(df, filt, var) {
+  x <- df %>%
+    pull({{var}})
+  df %>%
+    mutate("{{var}}_s" := signal::filtfilt(filt,c(rev(x),x,rev(x)))[(length(x) + 1):(2 * length(x))],
+           "{{var}}_s2" := signal::filtfilt(filt,x))
+}
+```
+
+```{r}
+speed <- 
+  speed %>%
+  dplyr::filter(!is.na(left_eye_vy_BL)) %>%
+  group_by(ID) %>%
+  group_modify(~ EndEffectDF(.x, butterfilt, left_eye_vy_BL)) %>%
+  ungroup()
+
+  # group_by(ID) %>%
+  # nest() %>% 
+  # mutate(smoothed = purrr::map(data, ~ EndEffect(butterfilt, .x$left_eye_vy_BLs)))
+
+```
+
+```{r}
+speed <- 
+  speed %>%
+  dplyr::filter(!is.na(left_eye_vx_BL)) %>%
+  group_by(ID) %>%
+  group_modify(~ EndEffectDF(.x, butterfilt, left_eye_vx_BL)) %>%
+  ungroup()
+```
+
+```{r}
+speed %>%
+  ggplot(aes(x = frame)) +
+  geom_line(aes(y = left_eye_vy_BL, color = 'left_eye_vy_BL')) +
+  geom_line(aes(y = left_eye_vy_BL_s, color = 'left_eye_vy_BL_s')) +
+  geom_line(aes(y = left_eye_vy_BL_s2, color = 'left_eye_vy_BL_s2')) +
+  facet_wrap(~ ID, scales = 'free')
+```
+
+```{r}
+speed %>%
+  ggplot(aes(x = frame)) +
+  geom_line(aes(y = left_eye_vx_BL, color = 'left_eye_vx_BL')) +
+  geom_line(aes(y = left_eye_vx_BL_s, color = 'left_eye_vx_BL_s')) +
+  geom_line(aes(y = left_eye_vx_BL_s2, color = 'left_eye_vx_BL_s2')) +
+  facet_wrap(~ ID, scales = 'free')
+```
+
+```{r}
+# plot left eye x position
+points %>% 
+  dplyr::filter(vertical_direction == "U") %>% 
+  ggplot(aes(shape = vertical_direction)) +
+  geom_point(aes(x = time, y = left_eye_x, color = "left_eye_x")) +
+  facet_wrap(~ID, scales = "free") +
+  labs(x = "Time (sec)", y = "Left Eye x Position")
+```
+
+
+```{r}
+# plot horizontal-forward velocity
+speed %>% 
+  dplyr::filter(vertical_direction == "D") %>%   
+  ggplot(aes(shape = vertical_direction)) +
+  geom_point(aes(x = time, y = left_eye_vx_BLs)) +
+  facet_wrap(~ID, scales = "free") +
+  labs(x = "Time (sec)", y = bquote('Speed'~(BL*s^-1)))
+
+```
+
+```{r}
+# ggsave("speed_up.png", plot = last_plot(), width = 2560, height = 1440, units = "px", limitsize = FALSE)
+```
+
+
+
+*Plot the body angle, speed, tail 3D position for an example trial*
+```{r}
+# pick one trial as an example
+ID3 <- data %>% 
+  dplyr::filter(fish == 'ms03' & trial == 3) %>%
+
+```
+
+
+```{r}
+ID3_long <-
+  ID3 %>%
+  pivot_longer(c(contains('eye'), contains('angle')), names_to = "name", values_to = "value")
+```
+
+
+```{r}
+ggplot(ID3_long, aes(x = time, y = value, color = name)) +
+  geom_point() +
+  facet_wrap(~name, ncol = 1, scales = "free_y") +
+  scale_color_discrete() +
+  theme(legend.position = "none")
+```
+
+
+```{r}
+# 1. body angle
+p1 <- body_angle_1 %>% 
+  dplyr::filter(ID == 3) %>%
+  ggplot(aes(x=time, y=body_angle_smooth, color = 'green')) +
+  geom_point() +
+  labs(x = "Time (sec)", y = "Body angle (deg)") +
+  theme(legend.position = "none")
+```
+
+
+```{r}
+# 2. left_eye_vx_BLs
+ID3<-na.omit(ID3)
+ID3$left_eye_vx_BLs<-signal::filtfilt(butterfilt, ID3$left_eye_vx_BLs)
+
+p2 <- ggplot(ID3, aes(x = time, y = left_eye_vx_BLs)) +
+  geom_point() +
+  labs(y = "x velocity (BL/s)")
+```
+
+
+```{r}
+# 3. left_eye_vy_BLs
+ID3$left_eye_vy_BLs <- signal::filtfilt(butterfilt, ID3$left_eye_vy_BLs)
+
+p3 <- ggplot(ID3, aes(x = time, y = left_eye_vy_BLs)) +
+  geom_point() +
+  labs(y = "y velocity (BL/s)")
+```   
+
+
+
+```{r}
+# read in previous 3D model data
+ID3_3d <- read_csv("/Users/minggong/Documents/Tytell_Lab/Project2/Code/ID3_3d.csv")
+
+ID3_3d <- ID3_3d %>% 
+  mutate(time = frame/200, .after=frame) %>% 
+  pivot_longer(cols = 3:7, names_to = "bodypart", values_to = "value")
+
+# reorder factors
+ID3_3d$bodypart <- factor(ID3_3d$bodypart, 
+                             levels = c("dorsal_top_p_top", "dorsal_middle_p_top", "middle", "ventral_middle_p_bottom", "ventral_bottom_p_bottom"),
+                             labels = c("dorsal top", "dorsal middle", "middle", "ventral middle", "ventral bottom"))
+```
+
+
+```{r}
+p4 <- ggplot(ID3_3d, aes(x = time, y = value, color = bodypart)) +
+  geom_point() + 
+  theme(legend.position = "bottom", 
+        legend.title = element_blank(),
+        legend.text = element_text(size=8)) +
+  labs(y = "Amplitude")
+p4
+```
+
+
+```{r}
+# use plotly to choose the traces you want
+plot_ly(data = ID3_3d, x = ~time) %>%
+  add_markers(y = ~dorsal_top_p_top, name = "dorsal_top_p_top") %>%
+  add_markers(y = ~dorsal_middle_p_top, name = "dorsal_middle_p_top") %>% 
+  add_markers(y = ~middle, name = "middle") %>% 
+  add_markers(y = ~ventral_middle_p_bottom, name = "ventral_middle_p_bottom") %>% 
+  add_markers(y = ~ventral_bottom_p_bottom, name = "ventral_bottom_p_bottom")
+```
+
+
+```{r}
+# use patchwork to combine pictures
+# notice that patchwork can only combine ggplot2 plots
+
+left_eye_trial3 <- p1/p2/p3/p4
+left_eye_trial3
+```
+
+
+
+
+*Combine the data and output a csv with all results (body angle, angular velocity, vertical velocity).*
+```{r}
+lateral_angle <- body_angle_1 %>% 
+  ungroup() %>%  
+  select(ID,
+         date,
+         fish,
+         trial,
+         frame,
+         time,
+         original_angle_smooth,
+         body_angle_smooth,
+         body_angle_smooth_rad,
+         ang_vel_smooth_rads)
+
+speed <- speed %>%
+  ungroup() %>% 
+  select(ID,
+         date,
+         fish,
+         trial,
+         frame,
+         left_eye_vy_BL_s,
+         left_eye_vx_BL_s)
+
+lateral_angle <- left_join(lateral_angle, speed, by = c("ID", "date", "fish", "trial", "frame"))
+```
+
+```{r}
+# save_csv_path <- "/Users/minggong/Users/minggong/Documents/Tytell_Lab/Project2/Data/UpAndDownGoodLateral/angle_vel_data"
+write_csv(lateral_angle, file = "lateral_angle_20211110_ms05.csv")
+
+```
+

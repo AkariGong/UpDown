@@ -1,0 +1,225 @@
+---
+title: "project2"
+output: html_notebook
+---
+
+```{r}
+library(readr)
+library(dplyr)
+library(tidyr)
+library(ggplot2)
+library(gcookbook)
+library(chisq.posthoc.test)
+```
+
+```{r read, message=FALSE}
+ms03 <- read_csv("ms03.csv")
+ms03 <- na.omit(ms03)
+ms04 <- read_csv("ms04.csv")
+ms04 <- na.omit(ms04)
+ms05 <- read_csv("ms05.csv")
+ms05 <- na.omit(ms05)
+combine <- read_csv("combine.csv")
+combine <- na.omit(combine)
+```
+
+```{r ms03}
+ms03.1 <- tibble(U_B = sum(ms03$vertical_direction == "U" & ms03$leading == "B"),
+                 U_D = sum(ms03$vertical_direction == "U" & ms03$leading == "D"),
+                 U_V = sum(ms03$vertical_direction == "U" & ms03$leading == "V"),
+                 H_B = sum(ms03$vertical_direction == "H" & ms03$leading == "B"),
+                 H_D = sum(ms03$vertical_direction == "H" & ms03$leading == "D"),
+                 H_V = sum(ms03$vertical_direction == "H" & ms03$leading == "V"),
+                 D_B = sum(ms03$vertical_direction == "D" & ms03$leading == "B"),
+                 D_D = sum(ms03$vertical_direction == "D" & ms03$leading == "D"),
+                 D_V = sum(ms03$vertical_direction == "D" & ms03$leading == "V")) %>% 
+  gather(key = movement, value = halftailbeat_count) %>% 
+  separate(col = movement, c("lateral", "rear_tail")) %>% 
+  transform(sum_lateral = ave(halftailbeat_count, lateral, FUN = sum)) %>% 
+  mutate(percent_count = halftailbeat_count/sum_lateral)
+
+xtabs(halftailbeat_count ~ lateral, data = ms03.1)
+
+ggplot(ms03.1, aes(x = lateral, y = percent_count, fill = rear_tail)) +
+  geom_bar(position="stack", stat="identity") +
+  labs(x = "Lateral direction", y = "Number of trials", fill = "Tail direction")+
+  scale_x_discrete(limits=c("U", "H", "D"),
+                   labels = c("Up", "Horizontal", "Down")) + # change the order of bars
+  scale_fill_manual(limits = c("B", "D", "V"), labels = c("Both", "Dorsal leading", "Ventral leading"), values = c("#94B3A7", "#FFDAB9", "#7084B3")) + # change the color, order and text of legend
+  theme_bw()
+
+```
+
+```{r ms04}
+ms04.1 <- tibble(U_B = sum(ms04$vertical_direction == "U" & ms04$leading == "B"),
+                 U_D = sum(ms04$vertical_direction == "U" & ms04$leading == "D"),
+                 U_V = sum(ms04$vertical_direction == "U" & ms04$leading == "V"),
+                 H_B = sum(ms04$vertical_direction == "H" & ms04$leading == "B"),
+                 H_D = sum(ms04$vertical_direction == "H" & ms04$leading == "D"),
+                 H_V = sum(ms04$vertical_direction == "H" & ms04$leading == "V"),
+                 D_B = sum(ms04$vertical_direction == "D" & ms04$leading == "B"),
+                 D_D = sum(ms04$vertical_direction == "D" & ms04$leading == "D"),
+                 D_V = sum(ms04$vertical_direction == "D" & ms04$leading == "V")) %>% 
+  gather(key = movement, value = halftailbeat_count) %>% 
+  separate(col = movement, c("lateral", "rear_tail")) %>% 
+  transform(sum_lateral = ave(halftailbeat_count, lateral, FUN = sum)) %>% 
+  mutate(percent_count = halftailbeat_count/sum_lateral)
+
+ggplot(ms04.1, aes(x = lateral, y = percent_count, fill = rear_tail)) +
+  geom_bar(position="stack", stat="identity") +
+  labs(x = "Lateral direction", y = "Number of trials", fill = "Tail direction")+
+  scale_x_discrete(limits=c("U", "H", "D"),
+                   labels = c("Up", "Horizontal", "Down")) + # change the order of bars
+  scale_fill_manual(limits = c("B", "D", "V"), labels = c("Both", "Dorsal leading", "Ventral leading"), values = c("#94B3A7", "#FFDAB9", "#7084B3")) + # change the color, order and text of legend
+  theme_bw()
+```
+
+```{r ms05}
+ms05.1 <- tibble(U_B = sum(ms05$vertical_direction == "U" & ms05$leading == "B"),
+                 U_D = sum(ms05$vertical_direction == "U" & ms05$leading == "D"),
+                 U_V = sum(ms05$vertical_direction == "U" & ms05$leading == "V"),
+                 H_B = sum(ms05$vertical_direction == "H" & ms05$leading == "B"),
+                 H_D = sum(ms05$vertical_direction == "H" & ms05$leading == "D"),
+                 H_V = sum(ms05$vertical_direction == "H" & ms05$leading == "V"),
+                 D_B = sum(ms05$vertical_direction == "D" & ms05$leading == "B"),
+                 D_D = sum(ms05$vertical_direction == "D" & ms05$leading == "D"),
+                 D_V = sum(ms05$vertical_direction == "D" & ms05$leading == "V")) %>% 
+  gather(key = movement, value = halftailbeat_count) %>% 
+  separate(col = movement, c("lateral", "rear_tail")) %>% 
+  transform(sum_lateral = ave(halftailbeat_count, lateral, FUN = sum)) %>% 
+  mutate(percent_count = halftailbeat_count/sum_lateral)
+
+ggplot(ms05.1, aes(x = lateral, y = percent_count, fill = rear_tail)) +
+  geom_bar(position="stack", stat="identity") +
+  labs(x = "Lateral direction", y = "Number of trials", fill = "Tail direction")+
+  scale_x_discrete(limits=c("U", "H", "D"),
+                   labels = c("Up", "Horizontal", "Down")) + # change the order of bars
+  scale_fill_manual(limits = c("B", "D", "V"), labels = c("Both", "Dorsal leading", "Ventral leading"), values = c("#94B3A7", "#FFDAB9", "#7084B3")) + # change the color, order and text of legend
+  theme_bw()
+```
+
+```{r combine}
+# plot combined data without transition analysis
+combine.1 <- tibble(U_B = sum(combine$vertical_direction == "U" & combine$leading == "B"),
+                 U_D = sum(combine$vertical_direction == "U" & combine$leading == "D"),
+                 U_V = sum(combine$vertical_direction == "U" & combine$leading == "V"),
+                 H_B = sum(combine$vertical_direction == "H" & combine$leading == "B"),
+                 H_D = sum(combine$vertical_direction == "H" & combine$leading == "D"),
+                 H_V = sum(combine$vertical_direction == "H" & combine$leading == "V"),
+                 D_B = sum(combine$vertical_direction == "D" & combine$leading == "B"),
+                 D_D = sum(combine$vertical_direction == "D" & combine$leading == "D"),
+                 D_V = sum(combine$vertical_direction == "D" & combine$leading == "V")) %>% 
+  gather(key = movement, value = halftailbeat_count) %>% 
+  separate(col = movement, c("lateral", "rear_tail")) %>% 
+  transform(sum_lateral = ave(halftailbeat_count, lateral, FUN = sum)) %>% 
+  mutate(percent_count = halftailbeat_count/sum_lateral*100)
+
+Result1 <- ggplot(combine.1, aes(x = lateral, y = percent_count, fill = rear_tail)) +
+  geom_bar(position="stack", stat="identity", color="black") +
+  labs(x = "Lateral direction", y = "Percentage of tailbeats", fill = "Tail direction")+
+  scale_x_discrete(limits=c("U", "H", "D"),
+                   labels = c("Up", "Horizontal", "Down")) + # change the order of bars
+  scale_fill_manual(limits = c("B", "D", "V"), labels = c("Symmetry", "Dorsal leading", "Ventral leading"), values = c("grey", "white", "black")) + # change the color, order and text of legend
+  theme_bw()
+  
+```
+
+```{r combine chisq test}
+# independent relationship analysis between leading lobes and the fish swimming direction
+combine.2 <- table(combine$leading, combine$vertical_direction)
+chisq.test(combine.2, correct = F)
+
+# alpha = 0.05/9 (p < 0.0056 to be significant)
+chisq.posthoc.test(combine.2)
+
+# comparison 1: Both+Dorsal vs Down+Horizontal
+chisq.test(combine.2[c(1,2), c(1,2)], correct = FALSE)
+## X-squared = 2.3163, df = 1, p-value = 0.128
+
+# comparison 2: Both+Dorsal vs Down+Upward
+chisq.test(combine.2[c(1,2), c(1,3)], correct = FALSE)
+## X-squared = 20.641, df = 1, p-value = 5.539e-06
+
+# comparison 3: Both+Dorsal vs Horizontal+Upward
+chisq.test(combine.2[c(1,2), c(2,3)], correct = FALSE)
+## X-squared = 28.459, df = 1, p-value = 9.568e-08
+
+# comparison 4: Both+Ventral vs Down+Horizontal
+chisq.test(combine.2[c(1,3), c(1,2)], correct = FALSE)
+## X-squared = 29.746, df = 1, p-value = 4.926e-08
+
+# comparison 5: Both+Ventral vs Down+Upward
+chisq.test(combine.2[c(1,3), c(1,3)], correct = FALSE)
+## X-squared = 48.118, df = 1, p-value = 4.014e-12
+
+# comparison 6: Both+Ventral vs Horizontal+Upward
+chisq.test(combine.2[c(1,3), c(2,3)], correct = FALSE)
+## X-squared = 0.83659, df = 1, p-value = 0.3604
+
+# comparison 7: Ventral+Dorsal vs Down+Horizontal
+chisq.test(combine.2[c(2,3), c(1,2)], correct = FALSE)
+## X-squared = 2.76, df = 1, p-value = 0.09665
+
+# comparison 8: Ventral+Dorsal vs Down+Upward
+chisq.test(combine.2[c(2,3), c(1,3)], correct = FALSE)
+## X-squared = 84.224, df = 1, p-value < 2.2e-16
+
+# comparison 9: Ventral+Dorsal vs Horizontal+Upward
+chisq.test(combine.2[c(2,3), c(2,3)], correct = FALSE)
+## X-squared = 21.234, df = 1, p-value = 4.064e-06
+
+# comparison: down vs horizontal
+chisq.test(combine.2[c(1:3), c(1,2)], correct = FALSE)
+## X-squared = 30.795, df = 2, p-value = 2.055e-07
+
+# comparison: down vs up
+chisq.test(combine.2[c(1:3), c(1,3)], correct = FALSE)
+## X-squared = 86.609, df = 2, p-value < 2.2e-16
+
+# comparison: up vs horizontal
+chisq.test(combine.2[c(1:3), c(2,3)], correct = FALSE)
+## X-squared = 30.153, df = 2, p-value = 2.834e-07
+
+```
+
+```{r with transition}
+combine.by.transition <- combine %>% group_by(vertical_direction)
+combine.3 <- combine.by.transition %>% summarise(Y_D = sum(movement_transition == "Y" & leading == "D"), 
+                                                 Y_V = sum(movement_transition == "Y" & leading == "V"),
+                                                 Y_B = sum(movement_transition == "Y" & leading == "B"),
+                                                 N_D = sum(movement_transition == "N" & leading == "D"), 
+                                                 N_V = sum(movement_transition == "N" & leading == "V"),
+                                                 N_B = sum(movement_transition == "N" & leading == "B")) %>% 
+  pivot_longer(!vertical_direction, names_to = "movement", values_to = "count") %>% 
+  separate(col = movement, c("transition", "rear_tail"))
+
+combine.3 <- combine.3 %>% mutate(Y = c(26, 26, 26, 106, 106, 106, 6, 6, 6, 70, 70, 70, 68, 68, 68, 101, 101, 101),
+                                  percent_count = count/Y*100)
+
+combine.4 <- combine.3 %>% mutate(vertical_direction = recode(vertical_direction, "U" = "Upward", "H" = "Horizontal", "D" = "Downward")) # change variable names for plotting facet
+
+# write_csv(combine.4, "TailBeat_Percentage.csv") # save as csv file
+
+ggplot(combine.4, aes(x = transition, y = percent_count, fill = rear_tail)) +
+  geom_bar(position="stack", stat="identity", color="black") +
+  facet_wrap(~ factor(vertical_direction, levels = c("Upward", "Horizontal", "Downward"))) + # create facet, change the order of facets
+#  theme(strip.text = element_text(face = "bold", size = 10)) + # useless code
+  labs(x= "Transition", y = "Percentage of tailbeats", fill = "Tail movement") +
+  scale_x_discrete(limits=c("N", "Y"),
+                   labels = c("No", "Yes")) + # change the order and labels of x-axis
+  scale_fill_manual(limits = c("B", "D", "V"), labels = c("Symmetric", "Dorsal leading", "Ventral leading"), values = c("grey", "white", "black")) + # change the color, order and text of legend
+  theme_bw()
+
+```
+
+```{r transition chisq test}
+# independent relationship analysis between leading lobes and transition status during swimming
+combine.5 <- table(combine$leading, combine$movement_transition)
+chisq.test(combine.5)
+```
+
+```{r transition test}
+
+
+```
+

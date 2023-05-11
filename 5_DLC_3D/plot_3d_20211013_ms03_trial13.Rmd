@@ -1,0 +1,384 @@
+---
+title: "R Notebook"
+output: word_document
+---
+
+```{r setup}
+library(tidyverse)
+library(plotly)
+library(here)
+library(ggpmisc)
+library(pracma)
+```
+
+```{r}
+source('fin_processing_3d.R')
+```
+
+```{r}
+filename <- here('20211013_ms03_trial13_DLC_3D.csv')
+```
+
+```{r}
+colnames <- read_csv(filename, skip=1, n_max=2, col_names = FALSE)
+```
+
+The first three rows of the DLC output file contain
+* The scorer, which isn't important for us
+* The body part names
+* The coordinate name (x, y, z)
+
+Below, we read in the 2nd and 3rd rows, and then merge them so that we get, for example 'dorsal_top_x'.
+```{r}
+bodyparts <- as.character(colnames[1,])
+coord <- as.character(colnames[2,])
+
+colnames <- tibble(bodyparts = bodyparts[2:length(bodyparts)], coord = coord[2:length(coord)])
+colnames <-
+  colnames %>%
+  mutate(colname = str_c(bodyparts, '_', coord)) %>%
+  pull(colname)
+
+colnames
+```
+
+Now read in the rest of the file with good column names
+```{r}
+data <- read_csv(filename, skip=3, col_names = c('frame', colnames))
+
+head(data)
+```
+
+```{r}
+bodypartorder = c("dorsal_top", "dorsal_middle", "middle", "ventral_middle", "ventral_bottom", "peduncle_top", "peduncle_middle", "peduncle_bottom", "eye")
+```
+
+This plots just one point in 3D
+```{r}
+plot_ly(data, x = ~middle_x, y = ~middle_y, z = ~middle_z) %>%
+  add_markers()
+```
+
+This makes our data set "tidy", arranging all of the x, y, z values in one column each, with another column that tells us which body part we're looking at.
+```{r}
+data_long <-
+  data %>% 
+  pivot_longer(cols = -frame, names_to = c('bodypart', '.value'), names_pattern = '(.+)_([xyz])')
+
+head(data_long)
+```
+
+```{r}
+data_long <-
+  data_long %>%
+  mutate(bodypart = factor(bodypart, levels = bodypartorder))
+```
+
+This is all of the points!
+```{r}
+plot_ly(data_long, x = ~x, y = ~y, z = ~z, color = ~bodypart) %>%
+  add_markers()
+```
+
+It looks like decreasing y is up, decreasing x is forward, and decreasing z is left. Let's make new coordinates that are called `up`, `fwd`, and `left`.
+```{r}
+data_long <-
+  data_long %>%
+  mutate(up = median(y, na.rm = TRUE) - y, fwd = max(x, na.rm = TRUE) - x, left = median(z, na.rm = TRUE) - z)
+
+head(data_long)
+```
+
+Now that seems to be oriented correctly!
+```{r}
+plot_ly(data_long, x = ~fwd, y = ~left, z = ~up, color = ~bodypart) %>%
+  add_markers()
+```
+
+```{r}
+triangles <- tribble(
+  ~i, ~j, ~k,
+  'dorsal_top',    'dorsal_middle', 'peduncle_top',
+  'dorsal_middle',  'middle', 'peduncle_middle',
+  #'peduncle_top', 'dorsal_middle', 'peduncle_middle',
+  'ventral_middle', 'peduncle_middle', 'middle',
+  'ventral_bottom', 'peduncle_bottom', 'ventral_middle')
+triangles
+```
+
+```{r}
+tri.ind <-
+  triangles %>%
+  mutate(across(c(i,j,k), ~ factor(.x, levels = bodypartorder)),
+         across(c(i,j,k), ~ as.integer(.x) - 1),
+         label = i+1)
+
+tri.ind
+```
+
+```{r}
+data_long %>%
+  arrange(frame, bodypart) %>%
+  filter(bodypart != 'eye') %>%
+  filter(frame >= 60 & frame < 80) %>%
+  plot_ly(x = ~fwd, y = ~left, z = ~up,
+          i = tri.ind$i, j = tri.ind$j, k = tri.ind$k, frame = ~frame,
+          intensity = tri.ind$label, intensitymode='cell',
+          type = 'mesh3d') %>%
+  add_markers(color = ~bodypart)
+```
+
+
+```{r}
+data_long %>%
+  plot_ly(x = ~frame, y = ~left, color = ~bodypart) %>%
+  add_markers()
+```
+
+
+```{r}
+p1 <-
+  data_long %>%
+  filter(bodypart %in% c('ventral_bottom')) %>% # c('dorsal_top', 'ventral_bottom', 'peduncle_top', 'peduncle_middle', 'peduncle_bottom')) %>%
+  # smooth_and_interp(k = 5) %>%
+  plot_ly(x = ~frame, y = ~left, color = ~bodypart) %>%
+  add_markers()
+
+p2 <-
+  data_long %>%
+  filter(bodypart %in% c('ventral_bottom')) %>% # c('dorsal_top', 'ventral_bottom', 'peduncle_top', 'peduncle_middle', 'peduncle_bottom')) %>%
+  # smooth_and_interp(k = 5) %>%
+  plot_ly(x = ~frame, y = ~up, color = ~bodypart) %>%
+  add_markers()
+
+subplot(p1, p2, nrows = 2, shareX = TRUE)
+```
+
+```{r}
+require(tidyverse)
+
+connect_points_in_frame <- function(df, connect,
+                           coords = c('fwd', 'left', 'up'))
+{
+  df2 <- data.frame(matrix(vector(), 0, 2 + 2*length(coords)))
+  colnames(df2) <- c('from', 'to', str_c(coords, '1'), str_c(coords, '2'))
+  
+  for (i in seq(1, nrow(connect))) {
+    a <- connect$from[i]
+    b <- connect$to[i]
+    df2[i, 'from'] <- a
+    df2[i, 'to'] <- b
+    
+    for (c in coords) {
+      ac <- paste(a, c, sep = '_')
+      bc <- paste(b, c, sep = '_')
+      
+      c1 <- paste0(c, '1')
+      c2 <- paste0(c, '2')
+      
+      df2[i, c1] <- df[1, ac]
+      df2[i, c2] <- df[1, bc]
+    }    
+  }
+  df2
+}
+
+connect_points <- function(df, connect,
+                           coords = c('fwd', 'left', 'up'))
+{
+  df <-
+    df %>%
+    select(frame, bodypart, one_of(coords))
+  
+  df <- df %>% pivot_wider(names_from = bodypart, values_from = one_of(coords), names_glue = "{bodypart}_{.value}")
+  
+  df %>%
+    group_by(frame) %>%
+    group_modify(~ connect_points_in_frame(.x, connect))
+}
+
+smooth_and_interp_point <- function(t, x, k = 7)
+{
+  xs <- rep_along(x, NA)
+  
+  good <- !is.na(x)
+  i <- which(good)
+  a <- i[1]
+  b <- i[length(i)]
+  
+  if (k == 1) {
+    xm <- x
+  }
+  else {
+    xm <- runmed(x, k, endrule = 'median', na.action = 'na.omit')
+  }
+  
+  sp <- smooth.spline(t[good], xm[good])
+  val <- predict(sp, t[a:b])
+  
+  xs[a:b] <- val$y
+  xs
+}
+
+smooth_and_interp <- function(df, t, x, y, z, 
+                              k = 7)
+{
+  df %>%
+    group_by(bodypart) %>%
+    mutate("{{x}}_s" := smooth_and_interp_point({{t}}, {{x}}, k = k),
+           "{{y}}_s" := smooth_and_interp_point({{t}}, {{y}}, k = k),
+           "{{z}}_s" := smooth_and_interp_point({{t}}, {{z}}, k = k))
+}
+
+find_jump <- function(df, t, x, y, z,
+                      bigjump = 0.98,
+                      maxjumpdur = 10,
+                      key = NA)
+{
+  if (!is.na(key)) {
+    print(str(key))
+  }
+  
+  df <- df %>%
+    mutate(dx = ({{x}} - lag({{x}})) / ({{t}} - lag({{t}})),
+           dy = ({{y}} - lag({{y}})) / ({{t}} - lag({{t}})),
+           dz = ({{z}} - lag({{z}})) / ({{t}} - lag({{t}})),
+           jumpmag = sqrt(dx^2 + dy^2 + dz^2))
+
+  qx <- quantile(df$jumpmag, bigjump, na.rm = TRUE)
+  
+  matchjumps <-
+    df %>%
+    filter(jumpmag > qx) %>%
+    mutate(jumpdir = (dx*lag(dx) + dy*lag(dy) + dz*lag(dz)) / (jumpmag * lag(jumpmag)),
+           jumpsize = jumpmag / lag(jumpmag)) %>%
+    mutate(isjumpback = (jumpdir < -0.95) & (jumpmag/lag(jumpmag) - 1 < 0.1),
+           jumpdur = ({{t}}) - lag({{t}}))
+  
+  matchjumps$jumpdir <- 0
+  
+  if (nrow(matchjumps) < 2) {
+    df %>%
+      mutate(jumpdir = 0,
+             isjump = FALSE)
+  } else {
+    matchedprev <- FALSE
+    for (i in seq(2,nrow(matchjumps))) {
+      if (!matchedprev & matchjumps$isjumpback[i] & (matchjumps$jumpdur[i] < maxjumpdur)) {
+        matchjumps$jumpdir[i-1] <- 1
+        matchjumps$jumpdir[i] <- -1
+        matchedprev <- TRUE
+      }
+      else {
+        matchedprev <- FALSE
+      }
+    }
+    
+    matchjumps <-
+      matchjumps %>%
+      select({{t}}, jumpdir, isjumpback)
+    
+    df %>%
+      left_join(matchjumps, by = as_label(enquo(t))) %>%
+      mutate(jumpdir = replace_na(jumpdir, 0),
+             isjump = cumsum(jumpdir))
+  }
+}
+```
+
+
+```{r}
+data_nojumps <-
+  data_long %>%
+  group_by(bodypart) %>%
+  group_modify(~find_jump(.x, frame, fwd, left, up, bigjump = 0.99)) %>%
+  mutate(left = if_else(isjump == 1, NA_real_, left)) %>%
+  ungroup() %>%
+  smooth_and_interp(frame, fwd,left,up, k = 1)
+```
+
+```{r}
+data_nojumps %>%
+  ggplot(aes(x = frame, color = bodypart)) +
+  geom_point(aes(y = left)) +
+  geom_line(aes(y = left_s))
+```
+
+```{r}
+data_nojumps %>%
+  group_by(frame) %>%
+  summarize(dorsal_lobe = left_s[1] - left_s[6],
+         ventral_lobe = left_s[5] - left_s[8]) %>%
+  ungroup()  %>%
+  plot_ly(x = ~frame) %>%
+  add_markers(y = ~dorsal_lobe, name = "Dorsal") %>%
+  add_markers(y = ~ventral_lobe, name = "Ventral")
+```
+
+```{r}
+data_nojumps_plot <- data_nojumps %>%
+  group_by(frame) %>%
+  summarize(dorsal_lobe = left_s[1] - left_s[6],
+         ventral_lobe = left_s[5] - left_s[8]) %>%
+  ungroup()
+
+data_peaks <- data_frame(lobe = "dorsal",
+                     frame = data_nojumps_plot$frame[ggpmisc:::find_peaks(data_nojumps_plot$dorsal_lobe)], 
+                     position = data_nojumps_plot$dorsal_lobe[ggpmisc:::find_peaks(data_nojumps_plot$dorsal_lobe)]) %>%
+  add_row(lobe = "dorsal",
+          frame = data_nojumps_plot$frame[ggpmisc:::find_peaks(-data_nojumps_plot$dorsal_lobe)],
+          position = data_nojumps_plot$dorsal_lobe[ggpmisc:::find_peaks(-data_nojumps_plot$dorsal_lobe)]) %>%
+  add_row(lobe = "ventral",
+          frame = data_nojumps_plot$frame[ggpmisc:::find_peaks(data_nojumps_plot$ventral_lobe)],
+          position = data_nojumps_plot$ventral_lobe[ggpmisc:::find_peaks(data_nojumps_plot$ventral_lobe)]) %>% 
+  add_row(lobe = "ventral",
+          frame = data_nojumps_plot$frame[ggpmisc:::find_peaks(-data_nojumps_plot$ventral_lobe)],
+          position = data_nojumps_plot$ventral_lobe[ggpmisc:::find_peaks(-data_nojumps_plot$ventral_lobe)]) 
+data_peaks <- data_peaks[order(data_peaks$frame),] # sort all rows by the frame number
+data_peaks_1 <- data_peaks %>% 
+  subset(frame >= 180 & frame <= 683) # create a subset by matching the range of frame numbers with qualitative analysis
+data_peaks_1 <- data_peaks_1[-c(),] # Remove certain rows if needed. The final data frame should have 12 rows, which means 3 tail beats.
+
+# write_csv(data_peaks_1, "3d_20211013_ms03_trial03.csv")
+
+```
+
+```{r}
+str(data_nojumps_plot)
+findpeaks(data_nojumps_plot$dorsal_lobe, minpeakdistance = 20, sortstr = F)
+```
+
+```{r}
+# obtain the phase shift
+
+data_nojumps_phase <- data_nojumps %>%
+  group_by(frame) %>%
+  summarize(dorsal_lobe = left_s[1] - left_s[6],
+         ventral_lobe = left_s[5] - left_s[8]) %>%
+  ungroup() %>% 
+  slice(181:684)
+
+ccf(data_nojumps_phase$dorsal_lobe, data_nojumps_phase$ventral_lobe, lag = 80, pl = F)
+
+max(abs(ccf(data_nojumps_phase$dorsal_lobe, data_nojumps_phase$ventral_lobe, lag = 100, plot = TRUE)[["acf"]]))
+
+lagindex <- which.max(abs(ccf(data_nojumps_phase$dorsal_lobe, data_nojumps_phase$ventral_lobe, lag = 100, plot = FALSE)[["acf"]]))
+bestlag <- ccf(data_nojumps_phase$dorsal_lobe, data_nojumps_phase$ventral_lobe, lag =100, plot = FALSE)[["lag"]][[lagindex]] %>% print()
+```
+
+
+```{r}
+# output a csv file of five points on the tail
+data_nojumps_plot <- data_nojumps %>% 
+  select(bodypart, frame, left_s) %>% 
+  group_by(frame) %>% 
+  summarize(dorsal_top_p_top = left_s[1] - left_s[6],
+            dorsal_middle_p_top = left_s[2] - left_s[6],
+            middle = left_s[3] -left_s[7],
+            ventral_middle_p_bottom = left_s[4] - left_s[8],
+            ventral_bottom_p_bottom = left_s[5] - left_s[8]) %>%
+  ungroup()
+
+write_csv(data_nojumps_plot, "20211013_ms03_trial13_3dtail.csv")
+```
+

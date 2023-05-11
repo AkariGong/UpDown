@@ -1,0 +1,79 @@
+---
+title: "quantitative_analysis"
+output: pdf_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r, message=FALSE}
+library(dplyr)
+library(tidyr)
+library(ggplot2)
+
+```
+
+```{r read data}
+quan_v1 <- read.csv("quantitative_v1.csv")
+quan_v1 <- select(quan_v1, 1:9)
+str(quan_v1)
+```
+
+```{r distribution}
+ggplot(data = quan_v1, mapping = aes(x = frame, y = position, color = lobe, shape = fish)) +
+  geom_point()
+# position centered around -0.5
+
+ggplot(data = quan_v1, mapping = aes(x = frame, y = position, color = vertical_direction)) +
+  geom_point()
+
+ggplot(data = quan_v1, mapping = aes(x = vertical_direction, y = position, color = lobe)) + 
+  geom_boxplot() +
+  geom_jitter(alpha = 0.5)
+```
+```{r}
+quan_v1 %>% slice(1:12) %>% 
+  ggplot(aes(x = frame, y = position, color = lobe)) + geom_point()
+
+quan_v1 %>% slice(13:24) %>% 
+  ggplot(aes(x = frame, y = position, color = lobe)) + geom_point()
+
+quan_v1 %>% slice(25:36) %>% 
+  ggplot(aes(x = frame, y = position, color = lobe)) + geom_point()
+
+```
+
+```{r}
+ggplot(data = quan_v1, mapping = aes(x = as.factor(tail_beat), y = position, color = lobe)) +
+  geom_boxplot()
+```
+```{r}
+ggplot(data = quan_v1, mapping = aes(x = vertical_direction, y = position, color = lobe)) +
+  geom_boxplot()
+```
+
+```{r}
+quan_v1 %>% 
+  group_by(tail_beat) %>% 
+  mutate(frame_diff = frame - lag(frame)) %>%
+  ungroup() %>% 
+  ggplot(mapping = aes(x = vertical_direction, y = frame_diff, color = lobe)) + geom_boxplot()
+
+quan_v1$row_num <- seq.int(nrow(quan_v1))
+
+for (i in 1:length(quan_v1)) {
+  if(row_num %% 2 == 1)
+    frame_diff <- frame - lag(frame)
+  print(frame_diff)
+    }
+print(count)  
+  
+  
+  
+```
+
+```{r}
+
+```
+

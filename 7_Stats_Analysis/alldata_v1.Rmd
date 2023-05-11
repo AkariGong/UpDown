@@ -1,0 +1,768 @@
+---
+title: "R Notebook"
+output: html_notebook
+params:
+  datadir: Data/7_Stats_Analysis
+  outputdir: Data/Results
+---
+
+```{r library}
+library(here)
+library(ggplot2)
+library(dplyr)
+library(purrr)
+library(readr)
+library(plotly)
+library(lubridate)
+library(patchwork)
+library(lme4)
+library(bbmle)
+```
+
+```{r}
+datadir <- here('Data', '7_Stats_Analysis')
+```
+
+```{r}
+# alldata <- list.files(pattern = "*.csv")
+#  
+# data <- alldata %>% 
+#   map_dfr(~read_csv(.))
+```
+
+```{r read in all data}
+data_2021 <- read_csv(here(datadir, "2021_alldata_v3.csv"))
+data_2022 <- read_csv(here(datadir, "2022_alldata_v1.csv"))
+```
+
+```{r combine 2021 and 2022}
+data <- bind_rows(data_2021, data_2022)
+```
+
+```{r read in trial_info_v2}
+# trial_info_v2 has the range of frames that include both points and left eye and strip
+
+trial_info_v2 <- read_csv("/Users/minggong/Documents/Tytell_Lab/Project2/Data/Qualitative/trial_info_v2.csv") %>% 
+  select(ID, fish, date, trial, vertical_direction)
+# change date format to year_month_date
+trial_info_v2$date <- ymd(trial_info_v2$date)
+
+# change starting and ending frame into time in second
+# trial_info_v2$start_full_range <- trial_info_v2$start_full_range/200
+# trial_info_v2$end_full_range <- trial_info_v2$end_full_range/200
+
+data <- left_join(data, trial_info_v2, by = c("date", "fish", "trial"))
+```
+
+```{r calculate amplitude difference}
+data <- data %>% mutate(amp_diff_1 = abs(dorsal_amp) - abs(ventral_amp))
+
+data <- data %>% 
+  group_by(ID) %>% 
+  mutate(amp_diff_2 = abs(lead(dorsal_amp)-dorsal_amp) - abs(lead(ventral_amp)-ventral_amp), # amp_diff_2 is the amplitude we should use
+         amp_diff_3 = amp_diff_1 + lead(amp_diff_1)) %>% 
+  ungroup()
+```
+
+```{r calculate phase difference}
+data <- data %>% filter(cyclenum < 6) 
+
+data$phase_diff <- data$phase_diff*-1 
+# change the sign of phase difference to make it more straightforward when plotting
+# After changing the sign, positive phase_diff means dorsal-leading.
+```
+
+```{r}
+# calculate the speed of tail moving?
+data <- data %>% 
+  group_by(ID) %>% 
+  mutate(dorsal_vel = (lead(dorsal_amp)-dorsal_amp)/(lead(dorsal_lead)-dorsal_lead),
+         ventral_vel = (lead(ventral_amp)-ventral_amp)/(lead(ventral_lead)-ventral_lead)) %>% 
+  ungroup()
+
+```
+
+
+```{r gradient function}
+library(grid)
+library(RColorBrewer)
+
+make_gradient <- function(deg = 45, n = 100, cols = blues9) {
+  cols <- colorRampPalette(cols)(n + 1)
+  rad <- deg / (180 / pi)
+  mat <- matrix(
+    data = rep(seq(0, 1, length.out = n) * cos(rad), n),
+    byrow = TRUE,
+    ncol = n
+  ) +
+  matrix(
+    data = rep(seq(0, 1, length.out = n) * sin(rad), n),
+    byrow = FALSE,
+    ncol = n
+  )
+  mat <- mat - min(mat)
+  mat <- mat / max(mat)
+  mat <- 1 + mat * n
+  mat <- matrix(data = cols[round(mat)], ncol = n)
+  grid::rasterGrob(
+    image = mat,
+    width = unit(1, "npc"),
+    height = unit(1, "npc"), 
+    interpolate = TRUE
+  )
+}
+```
+
+```{r make gradient for the background}
+g <- make_gradient(
+  deg = 0, n = 500, cols = c("#FFFFFF","#FFF4EB", "#FFECDB") # brewer.pal(3, "YlOrBr")
+)
+```
+
+
+```{r}
+# p0: mean original body angle vs. tail beat cycles
+p0 <- data %>%
+  ggplot(aes(x = cyclenum, y = mean_original_angle_deg, color = vertical_direction)) +
+  annotation_custom(grob = g, xmin = 3.75, xmax = 4.5, ymin = -Inf, ymax = Inf) + 
+  geom_rect(aes(xmin = 4.45, xmax = 5.7, ymin = -Inf, ymax = +Inf), fill = "#FFECDB", inherit.aes = FALSE) +
+  geom_line(alpha = 0.5) +
+  stat_summary(fun.data = 'mean_cl_boot', position = position_dodge(width = 0.3)) +
+  stat_summary(fun.y = mean, geom = "line") +
+  labs(x = "Tail beat cycle", y = "Body angle (deg)", color = "Vertical direction") + 
+  scale_colour_manual(labels = c("U"="Upward", "H"="Horizontal","D"="Downward"), values = c("U"="#E70000","H"="#F5B800","D"="#0080FF")) + # change color label
+  scale_x_continuous(breaks = c(1,2,3,4,5,6,7,8,9,10,11,12)) + 
+  theme_classic() +
+  theme(text = element_text(size = 20))
+
+p0
+```
+
+
+```{r}
+# p1: mean body angle vs. tail beat cycles
+
+p1 <- data %>%
+  ggplot(aes(x = cyclenum, y = mean_bodyangle_deg, color = vertical_direction)) +
+  annotation_custom(grob = g, xmin = 3.75, xmax = 4.5, ymin = -Inf, ymax = Inf) + 
+  geom_rect(aes(xmin = 4.45, xmax = 5.7, ymin = -Inf, ymax = +Inf), fill = "#FFECDB", inherit.aes = FALSE) +
+  stat_summary(fun.data = 'mean_cl_boot', position = position_dodge(width = 0.3)) +
+  labs(x = "Tail beat cycle", y = "Body angle (deg)", color = "Vertical direction") + 
+  scale_colour_manual(labels = c("U"="Upward", "H"="Horizontal","D"="Downward"), values = c("U"="#E70000","H"="#F5B800","D"="#0080FF")) + # change color label
+  scale_x_continuous(breaks = c(1,2,3,4,5,6,7,8,9,10,11,12)) + 
+  theme_classic() +
+  theme(text = element_text(size = 20))
+
+p1
+```
+
+```{r}
+p1_v2 <- data %>%
+  ggplot(aes(x = cyclenum, y = mean_bodyangle_deg, color = vertical_direction)) +
+  stat_summary(fun.data = 'mean_cl_boot', geom = "ribbon", alpha = 0.3, aes(fill = vertical_direction)) +
+  stat_summary(fun.y = 'mean', geom = "line") +
+  labs(x = "Tail beat cycle", y = "Body angle (deg)", color = "Vertical direction") + 
+  scale_colour_manual(labels = c("U"="Upward", "H"="Horizontal","D"="Downward"), values = c("U"="#C00000","H"="#BF9000","D"="#4472C4")) + # change color label
+  scale_x_continuous(breaks = c(1,2,3,4,5,6)) + 
+  theme_bw()
+p1_v2
+```
+
+
+```{r}
+# p2: angular velocity vs. tail beat cycles
+
+p2 <- data %>%
+  ggplot(aes(x = cyclenum, y = mean_angvel_rads, color = vertical_direction)) +
+  annotation_custom(grob = g, xmin = 3.75, xmax = 4.5, ymin = -Inf, ymax = Inf) + 
+  geom_rect(aes(xmin = 4.45, xmax = 5.7, ymin = -Inf, ymax = +Inf), fill = "#FFECDB", inherit.aes = FALSE) +
+  stat_summary(fun.data = 'mean_cl_boot', position = position_dodge(width = 0.3)) +
+  labs(x = "Tail beat cycle", y = "Angular velocity (rad/s)", color = "Vertical direction") + 
+  scale_colour_manual(labels = c("U"="Upward", "H"="Horizontal","D"="Downward"), values = c("U"="#E70000","H"="#F5B800","D"="#0080FF")) + # change color label
+  scale_x_continuous(breaks = c(1,2,3,4,5,6)) + 
+  theme_classic() +
+  theme(text = element_text(size = 20))
+
+p2
+```
+
+
+```{r}
+p3 <- ggplot(data, aes(x = cyclenum, y = mean_vert_v_BLs, color = vertical_direction)) +
+  stat_summary(fun.data = 'mean_cl_boot', position = position_dodge(width = 0.3)) +
+  labs(x = "Tail beat cycle", y = "Vertical velocity (BL/s)", color = "Vertical Direction") + 
+  scale_colour_manual(labels = c("Downward", "Horizontal", "Upward"), values = c("#fe988d","#0b5394", "#a5cfb5")) + # change color label
+  scale_x_continuous(breaks = c(1,2,3,4,5,6,7,8,9,10,11,12)) + 
+  theme_bw()
+p3
+```
+
+```{r}
+data %>%
+  ggplot(aes(x = cyclenum, y = abs(cycle_dorsal_amp)-abs(cycle_ventral_amp), color = leading)) +
+  stat_summary(fun.data = 'mean_cl_boot', position = position_dodge(width = 0.3)) +
+  labs(x = "Tail beat cycle", y = "Amplitude difference") + 
+#  scale_colour_manual(labels = c("Downward", "Horizontal", "Upward"), values = c("#fe988d","#0b5394", "#a5cfb5")) + # change color label
+  scale_x_continuous(breaks = c(1,2,3,4,5,6,7,8,9,10,11,12)) + 
+  theme_bw()
+```
+```{r}
+data %>%
+  ggplot(aes(x = cyclenum, y = cycle_ventral_amp, color = leading)) +
+  stat_summary(fun.data = 'mean_cl_boot', position = position_dodge(width = 0.3)) +
+  labs(x = "Tail beat cycle") + 
+#  scale_colour_manual(labels = c("Downward", "Horizontal", "Upward"), values = c("#fe988d","#0b5394", "#a5cfb5")) + # change color label
+  scale_x_continuous(breaks = c(1,2,3,4,5,6,7,8,9,10,11,12)) + 
+  theme_bw()
+```
+```{r}
+p6 <- data %>% 
+  ggplot(aes(x = cyclenum, y = dorsal_amp-ventral_amp, color = vertical_direction)) +
+  stat_summary(fun.data = 'mean_cl_boot', position = position_dodge(width = 0.3)) +
+  labs(x = "Tail beat cycle", y = "Amplitude difference", color = "Vertical Direction") + 
+  scale_colour_manual(labels = c("Downward", "Horizontal", "Upward"), values = c("#fe988d","#0b5394", "#a5cfb5")) + # change color label
+  scale_x_continuous(breaks = c(1,2,3,4,5,6,7,8,9,10,11,12)) + 
+  theme_bw()
+p6
+```
+
+
+```{r}
+p4 <- data %>%
+  ggplot(aes(x = cyclenum, y = abs(cycle_dorsal_amp)-abs(cycle_ventral_amp), color = vertical_direction)) +
+  stat_summary(fun.data = 'mean_cl_boot', position = position_dodge(width = 0.3)) +
+  labs(x = "Tail beat cycle", y = "Change of amplitude difference", color = "Vertical Direction") + 
+  scale_colour_manual(labels = c("Downward", "Horizontal", "Upward"), values = c("#fe988d","#0b5394", "#a5cfb5")) + # change color label
+  scale_x_continuous(breaks = c(1,2,3,4,5,6,7,8,9,10,11,12)) + 
+  theme_bw()
+p4
+```
+
+```{r}
+p5 <- data %>%
+  ggplot(aes(x = cyclenum, y = phase_diff, color = vertical_direction)) +
+  stat_summary(fun.data = 'mean_cl_boot', position = position_dodge(width = 0.3)) +
+  labs(x = "Tail beat cycle", y = "Phase difference", color = "Vertical Direction") + 
+  scale_colour_manual(labels = c("Downward", "Horizontal", "Upward"), values = c("#fe988d","#0b5394", "#a5cfb5")) + # change color label
+  scale_x_continuous(breaks = c(1,2,3,4,5,6,7,8,9,10,11,12)) + 
+  theme_bw()
+p5
+```
+
+
+```{r}
+ggplot(data, aes(x = vertical_direction, fill = leading)) +
+  geom_bar()
+```
+
+```{r}
+ggplot(data, aes(x = mean_bodyangle_deg, y = abs(cycle_dorsal_amp)-abs(cycle_ventral_amp), color = vertical_direction)) + 
+  labs(x = "Body angle", y = "Amplitude difference") +
+  geom_point()
+```
+
+```{r}
+ggplot(data, aes(x = mean_bodyangle_deg, y = cycle_dorsal_amp-cycle_ventral_amp, color = leading)) + 
+  labs(x = "Body angle", y = "Amplitude difference") +
+  geom_point()
+```
+
+```{r}
+ggplot(data, aes(x = mean_original_angle_deg, y = phase_diff, color = vertical_direction)) +
+  labs(x = "Body angle", y = "Phase differrence") +
+  geom_point() +
+  geom_smooth(aes(group = 1), method = "lm")
+
+ggplot(data, aes(x = mean_bodyangle_deg, y = phase_diff, color = vertical_direction)) +
+  labs(x = "Body angle", y = "Phase differrence") +
+  geom_point() +
+  geom_smooth(aes(group = 1), method = "lm")
+# check significance
+# positive: ventral-leading
+# negative: dorsal-leading
+```
+
+```{r}
+ggplot(data, aes(x = cycle_dorsal_amp-cycle_ventral_amp, y = phase_diff, color = vertical_direction)) +
+  labs(x = "Amplitude difference") +
+  geom_point()
+```
+
+
+```{r}
+p7 <- data %>% 
+  ggplot(aes(x = mean_bodyangle_deg, y = mean_angvel_rads, color = mean_vert_v_BLs)) +
+  geom_point() +
+  labs(x = "Body angle (deg)", y = "Angular velocity (rad/s)", color = "Vertical velocity (BL/s)") +
+  stat_smooth(method = 'lm') #+
+#  facet_grid(rows = .~cyclenum)
+
+p7
+
+model_yangv_xbodyangle <- lm(mean_angvel_rads ~ mean_bodyangle_deg, data = data)
+summary(model_yangv_xbodyangle)
+```
+
+
+```{r}
+p8 <- data %>% 
+  ggplot(aes(x = mean_bodyangle_deg, y = mean_vert_v_BLs, color = leading)) +
+  geom_point() +
+  labs(x = "Body angle (deg)", y = "Vertical velocity", color = "Leading") + 
+  stat_smooth(aes(group = 1), method = 'lm') +
+  facet_grid(rows = .~cyclenum)
+p8
+
+model_yvertv_xbodyangle <- lm(mean_vert_v_BLs ~ mean_bodyangle_deg, data = data)
+summary(model_yvertv_xbodyangle)
+```
+
+```{r}
+p13 <- data %>% 
+  ggplot(aes(x = mean_bodyangle_deg, y = mean_horiz_v_BLs, color = leading)) +
+  geom_point() +
+  labs(x = "Body angle (deg)", y = "Horizontal velocity", color = "Leading") + 
+  stat_smooth(aes(group = 1), method = 'lm') +
+  facet_grid(rows = .~cyclenum)
+p13
+
+model_yhorizv_xbodyangle <- lm(mean_horiz_v_BLs ~ mean_bodyangle_deg, data = data)
+summary(model_yhorizv_xbodyangle)
+```
+
+
+
+```{r}
+p9 <- data %>% 
+  ggplot(aes(x = mean_original_angle_deg, y = amp_diff_2, color = vertical_direction)) +
+  geom_hline(yintercept = 0, linetype = 2) +
+  geom_point(size = 2) +
+  labs(x = "Body angle (deg)", y = "Amplitude difference", color = "Vertical direction") + 
+  stat_smooth(aes(group = 1), method = 'lm', color = "black", linetype = "dashed") +
+  scale_colour_manual(labels = c("U"="Upward", "H"="Horizontal","D"="Downward"), values = c("U"="#E70000","H"="#F5B800","D"="#0080FF")) + # change color label
+  theme_classic() +
+  theme(text=element_text(size=20))
+
+#  facet_grid(rows = .~cyclenum)
+p9
+
+p9_cycle1to4 <- data %>% 
+  dplyr::filter(cyclenum <= 4) %>% 
+  ggplot(aes(x = mean_bodyangle_deg, y = amp_diff_2, color = vertical_direction)) +
+  geom_hline(yintercept = 0, linetype = 2) +
+  geom_point(size = 2) +
+  labs(title = "Transition state", x = "Body angle (deg)", y = "Amplitude difference", color = "Vertical direction") + 
+  xlim(-40, 55) +
+  ylim(-1.9, 0.6) +
+  stat_smooth(aes(group = 1), method = 'lm', color = "black", linetype = "dashed") +
+  scale_colour_manual(labels = c("U"="Upward", "H"="Horizontal","D"="Downward"), values = c("U"="#E70000","H"="#F5B800","D"="#0080FF")) + # change color label
+  theme_classic() +
+  theme(text=element_text(size=20), plot.title = element_text(size = 25))
+p9_cycle1to4
+
+#  facet_grid(rows = .~cyclenum)
+p9_cycle4to5 <- data %>% 
+  dplyr::filter(cyclenum > 4) %>% 
+  ggplot(aes(x = mean_bodyangle_deg, y = amp_diff_2, color = vertical_direction)) +
+  geom_rect(aes(xmin = -Inf, xmax = +Inf, ymin = -Inf, ymax = +Inf), fill = "#FFECDB", inherit.aes = FALSE) +
+  geom_hline(yintercept = 0, linetype = 2) +
+  geom_point(size = 2) +
+  labs(title = "Maintaining state", x = "Body angle (deg)", y = "Amplitude difference", color = "Vertical direction") + 
+  xlim(-40, 55) +
+  ylim(-1.9, 0.6) +
+  stat_smooth(aes(group = 1), method = 'lm', color = "black", linetype = "dashed") +
+  scale_colour_manual(labels = c("U"="Upward", "H"="Horizontal","D"="Downward"), values = c("U"="#E70000","H"="#F5B800","D"="#0080FF")) + # change color label
+  theme_classic() +
+  theme(text=element_text(size=20), plot.title = element_text(size = 25))
+p9_cycle4to5
+```
+
+```{r}
+model_yampdiff_xbodyangle <- lm(amp_diff_2 ~ mean_bodyangle_deg, data = data)
+summary(model_yampdiff_xbodyangle)
+
+# model_yampdiff_xvertv <- lm(amp_diff ~ mean_vert_v_BLs, data = data)
+# summary(model_yampdiff_xvertv)
+# 
+# model_yampdiff_xhorizv <- lm(amp_diff ~ mean_horiz_v_BLs, data = data)
+# summary(model_yampdiff_xhorizv)
+
+model_yampdiff_xbodyangle_cycle1to4 <- lm(amp_diff_2 ~ mean_bodyangle_deg, data = data %>% dplyr::filter(cyclenum <= 4))
+summary(model_yampdiff_xbodyangle_cycle1to4)
+
+model_yampdiff_xbodyangle_cycle4to5 <- lm(amp_diff_2 ~ mean_bodyangle_deg, data = data %>% dplyr::filter(cyclenum > 4))
+summary(model_yampdiff_xbodyangle_cycle4to5)
+```
+
+```{r}
+p10 <- data %>% 
+  ggplot(aes(x = mean_angvel_rads, y = amp_diff_2, color = vertical_direction)) +
+  geom_hline(yintercept = 0, linetype = 2) +
+  geom_point(size = 2) +
+  labs(x = "Angular velocity (rad/s)", y = "Amplitude difference", color = "Vertical direction") + 
+  stat_smooth(aes(group = 1), method = 'lm', color = "black") +
+  scale_colour_manual(labels = c("U"="Upward", "H"="Horizontal","D"="Downward"), values = c("U"="#E70000","H"="#F5B800","D"="#0080FF")) + # change color label
+  theme_classic() +
+  theme(text=element_text(size=20))
+p10
+
+
+p10_cycle1to4 <- data %>% 
+  dplyr::filter(cyclenum <= 4) %>% 
+  ggplot(aes(x = mean_angvel_rads, y = amp_diff_2, color = vertical_direction)) +
+  geom_hline(yintercept = 0, linetype = 2) +
+  geom_point(size = 2) +
+  labs(title = "Transition state", x = "Angular velocity (rad/s)", y = "Amplitude difference", color = "Vertical direction") +
+  xlim(-0.7, 1.0) +
+  ylim(-1.9, 0.6) +
+  stat_smooth(aes(group = 1), method = 'lm', color = "black") +
+  scale_colour_manual(labels = c("U"="Upward", "H"="Horizontal","D"="Downward"), values = c("U"="#E70000","H"="#F5B800","D"="#0080FF")) + # change color label
+  theme_classic() +
+  theme(text=element_text(size=20), plot.title = element_text(size = 25))
+p10_cycle1to4
+
+
+p10_cycle4to5 <- data %>% 
+  dplyr::filter(cyclenum > 4) %>% 
+  ggplot(aes(x = mean_angvel_rads, y = amp_diff_2, color = vertical_direction)) +
+  geom_rect(aes(xmin = -Inf, xmax = +Inf, ymin = -Inf, ymax = +Inf), fill = "#FFECDB", inherit.aes = FALSE) +
+  geom_hline(yintercept = 0, linetype = 2) +
+  geom_point(size = 2) +
+  labs(title = "Maintaining state", x = "Angular velocity (rad/s)", y = "Amplitude difference", color = "Vertical direction") + 
+  xlim(-0.7, 1.0) +
+  ylim(-1.9, 0.6) +
+  stat_smooth(aes(group = 1), method = 'lm', color = "black") +
+  scale_colour_manual(labels = c("U"="Upward", "H"="Horizontal","D"="Downward"), values = c("U"="#E70000","H"="#F5B800","D"="#0080FF")) + # change color label
+  theme_classic() +
+  theme(text=element_text(size=20), plot.title = element_text(size = 25))
+p10_cycle4to5
+```
+```{r}
+model_yampdiff_xangvel <- lm(amp_diff_2 ~ mean_angvel_rads, data = data)
+summary(model_yampdiff_xangvel)
+
+model_yampdiff_xangvel_cycle1to4 <- lm(amp_diff_2 ~ mean_angvel_rads, data = data %>% dplyr::filter(cyclenum <= 4))
+summary(model_yampdiff_xangvel_cycle1to4)
+
+model_yampdiff_xangvel_cycle4to5 <- lm(amp_diff_2 ~ mean_angvel_rads, data = data %>% dplyr::filter(cyclenum > 4))
+summary(model_yampdiff_xangvel_cycle4to5)
+```
+
+```{r}
+p11 <- data %>% 
+  ggplot(aes(x = mean_bodyangle_deg, y = phase_diff, color = vertical_direction)) +
+  geom_point(size = 2) +
+  labs(x = "Body angle (deg)", y = "Phase difference", color = "Vertical direction") + 
+  ylim(-0.35, 0.45) +
+  stat_smooth(aes(group = 1), method = 'lm', color = "black") +
+  scale_colour_manual(labels = c("U"="Upward", "H"="Horizontal","D"="Downward"), values = c("U"="#E70000","H"="#F5B800","D"="#0080FF")) + # change color label
+  theme_classic() +
+  theme(text=element_text(size=20)) #+
+#  facet_grid(rows = .~cyclenum)
+p11
+
+model_yphasediff_xbodyangle <- lm(phase_diff ~ mean_bodyangle_deg, data = data)
+summary(model_yphasediff_xbodyangle)
+```
+
+```{r}
+p11_cycle1to4 <- data %>% 
+  dplyr::filter(cyclenum <= 4) %>% 
+  ggplot(aes(x = mean_bodyangle_deg, y = phase_diff, color = vertical_direction)) +
+  geom_hline(yintercept = 0, linetype = 2) +
+  geom_point(size = 2) +
+  labs(title = "Transition state", x = "Body angle (deg)", y = "Phase difference", color = "Vertical direction") + 
+  xlim(-40, 55) +
+  ylim(-0.45, 0.35) +
+  stat_smooth(aes(group = 1), method = 'lm', color = "black") +
+  scale_colour_manual(labels = c("U"="Upward", "H"="Horizontal","D"="Downward"), values = c("U"="#E70000","H"="#F5B800","D"="#0080FF")) + # change color label
+  theme_classic() +
+  theme(text=element_text(size=20), plot.title = element_text(size = 25))
+#ggsave(filename = "yphasediff_xangle_transition.png", plot=p11_cycle1to4, width = 1099, height = 800, units = "px")
+
+p11_cycle4to5 <- data %>% 
+  dplyr::filter(cyclenum > 4) %>% 
+  ggplot(aes(x = mean_bodyangle_deg, y = phase_diff, color = vertical_direction)) +
+  geom_rect(aes(xmin = -Inf, xmax = +Inf, ymin = -Inf, ymax = +Inf), fill = "#FFECDB", inherit.aes = FALSE) +
+  geom_hline(yintercept = 0, linetype = 2) +
+  geom_point(size = 2) +
+  labs(title = "Maintaining state", x = "Body angle (deg)", y = "Phase difference", color = "Vertical direction") + 
+  xlim(-40, 55) +
+  ylim(-0.45, 0.35) +
+  stat_smooth(aes(group = 1), method = 'lm', color = "black", linetype = "dashed") +
+  scale_colour_manual(labels = c("U"="Upward", "H"="Horizontal","D"="Downward"), values = c("U"="#E70000","H"="#F5B800","D"="#0080FF")) + # change color label
+  theme_classic() +
+  theme(text=element_text(size=20), plot.title = element_text(size = 25))
+
+```
+
+```{r}
+model_yphasediff_xbodyangle_cycle1to4 <- lm(phase_diff ~ mean_bodyangle_deg, data = data %>% dplyr::filter(cyclenum <= 4))
+summary(model_yphasediff_xbodyangle_cycle1to4)
+
+model_yphasediff_xbodyangle_cycle4to5 <- lm(phase_diff ~ mean_bodyangle_deg, data = data %>% dplyr::filter(cyclenum > 4))
+summary(model_yphasediff_xbodyangle_cycle4to5)
+```
+
+```{r}
+p12 <- data %>% 
+  ggplot(aes(x = mean_vert_v_BLs, y = amp_diff_2, color = vertical_direction)) +
+  geom_hline(yintercept = 0, linetype = 2) +
+  geom_point(size = 2) +
+  labs(x = "Vertical velocity (BL/s)", y = "Amplitude difference", color = "Vertical direction") + 
+  stat_smooth(aes(group = 1), method = 'lm', color = "black") +
+  scale_colour_manual(labels = c("U"="Upward", "H"="Horizontal","D"="Downward"), values = c("U"="#E70000","H"="#F5B800","D"="#0080FF")) + # change color label
+  theme_classic() +
+  theme(text=element_text(size=20))
+p12
+
+
+p12_cycle1to4 <- data %>% 
+  dplyr::filter(cyclenum <= 4) %>% 
+  ggplot(aes(x = mean_vert_v_BLs, y = amp_diff_2, color = vertical_direction)) +
+  geom_hline(yintercept = 0, linetype = 2) +
+  geom_point(size = 2) +
+  labs(title = "Transition state", x = "Vertical velocity (BL/s)", y = "Amplitude difference", color = "Vertical direction") +
+  xlim(-0.8, 0.5) +
+  ylim(-1.9, 0.6) +
+  stat_smooth(aes(group = 1), method = 'lm', color = "black") +
+  scale_colour_manual(labels = c("U"="Upward", "H"="Horizontal","D"="Downward"), values = c("U"="#E70000","H"="#F5B800","D"="#0080FF")) + # change color label
+  theme_classic() +
+  theme(text=element_text(size=20), plot.title = element_text(size = 25))
+p12_cycle1to4
+
+
+p12_cycle4to5 <- data %>% 
+  dplyr::filter(cyclenum > 4) %>% 
+  ggplot(aes(x = mean_vert_v_BLs, y = amp_diff_2, color = vertical_direction)) +
+  geom_rect(aes(xmin = -Inf, xmax = +Inf, ymin = -Inf, ymax = +Inf), fill = "#FFECDB", inherit.aes = FALSE) +
+  geom_hline(yintercept = 0, linetype = 2) +
+  geom_point(size = 2) +
+  labs(title = "Maintaining state", x = "Vertical velocity (BL/s)", y = "Amplitude difference", color = "Vertical direction") + 
+  xlim(-0.8, 0.5) +
+  ylim(-1.9, 0.6) +
+  stat_smooth(aes(group = 1), method = 'lm', color = "black") +
+  scale_colour_manual(labels = c("U"="Upward", "H"="Horizontal","D"="Downward"), values = c("U"="#E70000","H"="#F5B800","D"="#0080FF")) + # change color label
+  theme_classic() +
+  theme(text=element_text(size=20), plot.title = element_text(size = 25))
+p12_cycle4to5
+```
+
+```{r}
+
+```
+
+```{r}
+data %>% 
+  ggplot(aes(x = mean_bodyangle_deg, y = dorsal_vel-ventral_vel)) +
+  labs(x = "Body angle (deg)", y = "Difference of velocity between dorsal and ventral lobes") +
+  geom_point() +
+  geom_smooth(method = "lm")# +
+#  facet_wrap(.~cyclenum)
+```
+
+```{r}
+data %>% 
+  ggplot(aes(x = phase_diff, y = amp_diff_2)) +
+  geom_point() +
+  stat_smooth(aes(group = 1), method = 'lm', color = "black") +
+  facet_wrap(~vertical_direction)
+
+```
+```{r}
+
+
+```
+
+
+```{r}
+tailbeatcycle <- p1/p2/p3/p6/p4/p5 + plot_layout(guides = "collect")
+tailbeatcycle
+```
+
+
+```{r}
+bodyangle <- p7/p8/p13/p9/p10/p11/p12 + plot_layout(guides = "collect")
+bodyangle
+```
+
+
+
+
+```{r}
+data %>% 
+  plot_ly(x = ~mean_bodyangle_deg) %>% 
+  add_trace(y = ~dorsal_amp, name = 'dorsal amp', mode = 'markers') %>% 
+  add_trace(y = ~dorsalmid_amp, name = 'dorsalmid amp', mode = 'markers') %>% 
+  add_trace(y = ~middle_amp, name = 'middle amp', mode = 'markers') %>% 
+  add_trace(y = ~ventralmid_amp, name = 'ventralmid amp', mode = 'markers') %>% 
+  add_trace(y = ~ventral_amp, name = 'ventral amp', mode = 'markers') %>% 
+  layout(xaxis = list(title = "Body angle (deg)"), yaxis = list(title = "Amplitude"))
+```
+
+```{r}
+data %>% 
+  plot_ly(x = ~mean_bodyangle_deg) %>% 
+  add_trace(y = ~dorsal_amp-dorsalmid_amp, name = 'dorsal-dormid amp', mode = 'markers') %>% 
+  add_trace(y = ~dorsal_amp-middle_amp, name = 'dorsal-middle amp', mode = 'markers') %>% 
+  add_trace(y = ~dorsal_amp-ventralmid_amp, name = 'dorsal-venmid amp', mode = 'markers') %>% 
+  add_trace(y = ~dorsal_amp-ventral_amp, name = 'dorsal-ventral amp', mode = 'markers') %>% 
+  layout(xaxis = list(title = "Body angle (deg)"), yaxis = list(title = "Amplitude"))
+
+```
+
+
+```{r}
+datalong2 <- data %>% mutate(ddm_amp = dorsal_amp-dorsalmid_amp,
+                ddm_phase = dorsal_phase-dorsalmid_phase,
+                dm_amp = dorsal_amp-middle_amp,
+                dm_phase = dorsal_phase-middle_phase,
+#                dvm_amp = dorsal_amp-ventralmid_amp,
+#                dvm_phase = dorsal_phase-ventralmid_phase,
+                dv_amp = dorsal_amp-ventral_amp,
+                dv_phase = dorsal_phase-ventral_phase) %>% 
+  pivot_longer(cols = ddm_amp:dv_phase, names_to = c('point', '.value'), names_pattern = "(.+)_(amp|phase)")
+
+datalong2 %>% 
+  ggplot(aes(x = mean_bodyangle_deg, y = phase, color = point)) +
+  geom_point() + 
+  labs(x = "Body angle (deg)", y = "Phase difference") +
+  geom_smooth(aes(group = 1), method = "lm")
+
+model_yampdiff5p_xbodyangle <- lm(amp ~ mean_bodyangle_deg, data = datalong2)
+summary(model_yampdiff5p_xbodyangle)
+
+model_yampdiff5p_xangvel <- lm(amp ~ mean_angvel_rads, data = datalong2)
+summary(model_yampdiff5p_xangvel)
+
+model_yampdiff5p_xhorizv <- lm(amp ~ mean_horiz_v_BLs, data = datalong2)
+summary(model_yampdiff5p_xhorizv)
+
+model_yampdiff5p_xvertv <- lm(amp ~ mean_vert_v_BLs, data = datalong2)
+summary(model_yampdiff5p_xvertv)
+
+```
+
+
+```{r}
+# Plot: difference of phase between dorsal and ventral lobes
+  # positive value: ventral leading
+  # negative value: dorsal leading
+data %>% 
+  plot_ly(x = ~mean_bodyangle_deg, yaxis = "Phase") %>% 
+  add_trace(y = ~dorsal_phase, name = 'dorsal phase', mode = 'markers') %>% 
+  add_trace(y = ~dorsalmid_phase, name = 'dorsalmid phase', mode = 'markers') %>% 
+  add_trace(y = ~middle_phase, name = 'middle phase', mode = 'markers') %>% 
+  add_trace(y = ~ventralmid_phase, name = 'ventralmid phase', mode = 'markers') %>% 
+  add_trace(y = ~ventral_phase, name = 'ventral phase', mode = 'markers') %>% 
+  layout(xaxis = list(title = "Body angle (deg)"), yaxis = list(title = "Phase"))
+
+```
+
+```{r}
+data %>% 
+  plot_ly(x = ~mean_bodyangle_deg, yaxis = "Phase diff") %>% 
+  add_trace(y = ~phase_diff, name = 'phase diff', mode = 'markers') %>% 
+  add_trace(y = ~dorsal_phase-middle_phase, name = 'dorsal-middle', mode = 'markers')
+```
+
+
+```{r}
+datalong <- data %>% 
+  pivot_longer(cols = dorsal_amp:ventral_phase, names_to = c('point', '.value'), names_pattern = "(.+)_(amp|lead|phase)")
+```
+
+```{r}
+datalong %>% 
+  ggplot(aes(x = mean_bodyangle_deg, y = amp, color = point)) +
+  geom_point() +
+  geom_smooth(aes(group = 1), method = "lm") +
+  theme_bw() #+
+#  facet_wrap(.~cyclenum)
+
+model_yamp_xbodyangle <- lm(amp ~ mean_bodyangle_deg, data = datalong)
+print(model_yamp_xbodyangle)
+
+summary(model_yamp_xbodyangle)
+```
+
+```{r}
+model_yvertv_xangvel <- lm(mean_vert_v_BLs ~ mean_angvel_rads, data = data)
+summary(model_yvertv_xangvel)
+
+model_yhorizv_xangvel <- lm(mean_horiz_v_BLs ~ mean_angvel_rads, data = data)
+summary(model_yhorizv_xangvel)
+
+model_yphasediff_xangvel <- lm(phase_diff ~ mean_angvel_rads, data = data)
+summary(model_yphasediff_xangvel)
+
+model_yvertv_xhorizv <- lm(mean_vert_v_BLs ~ mean_horiz_v_BLs, data = data)
+summary(model_yvertv_xhorizv)
+
+model_yphasediff_xvertv <- lm(phase_diff ~ mean_vert_v_BLs, data = data)
+summary(model_yphasediff_xvertv)
+```
+
+
+
+
+
+
+
+*Find distribution*
+```{r}
+library(car)
+library(MASS)
+
+data$phase_diff_t <- data$phase_diff + 1  # +1 to make it non-zero?
+qqp(data$phase_diff_t, "norm")
+```
+
+```{r}
+qqp(data$phase_diff_t, "lnorm")
+```
+
+```{r}
+ggplot(data, aes(x=vertical_direction, y=phase_diff)) + geom_violin() + theme_bw()
+```
+
+```{r}
+fit_lm <- lm(phase_diff ~ vertical_direction, data=data)
+summary(fit_lm)
+```
+
+```{r}
+qqnorm(rstandard(fit_lm))
+qqline(rstandard(fit_lm), col=2)
+```
+
+
+
+
+```{r}
+lmm_1 <- lmer(phase_diff ~ mean_original_angle_deg + (1 | fish), data = data, REML = FALSE)
+summary(lmm_1)
+```
+
+```{r}
+lmm_2 <- lmer(phase_diff ~ mean_original_angle_deg + (1 + fish | date), data = data, REML = FALSE)
+summary(lmm_2)
+```
+```{r}
+lmm_3 <- lmer(phase_diff ~ mean_original_angle_deg + (1 + fish | trial), data = data, REML = FALSE)
+summary(lmm_3)
+```
+```{r}
+anova(lmm_1, lmm_2)
+```
+
+
+```{r}
+qqp(data$amp_diff_2, "norm")
+```
+
+```{r}
+lmm_3 <- lmer(amp_diff_2 ~ mean_original_angle_deg + (1 | fish), data = data, REML = FALSE)
+summary(lmm_3)
+```
+
