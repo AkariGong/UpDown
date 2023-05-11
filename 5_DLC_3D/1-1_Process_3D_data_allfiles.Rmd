@@ -9,8 +9,6 @@ library(here)
 library(knitr)
 ```
 
-Added an error! We don't want this!
-
 ```{r}
 datadir <- here('Data','5_Raw3D')
 processfiledir <- here('Data', '5_Raw3D')
