@@ -8,8 +8,19 @@ library(stringr)
 library(tidyr)
 library(lubridate)
 library(circular) # calculate angle std.
+library(here)
 
-# This "comparetailpoints_v2.rmd" file has more variables for output.
+## Set the project root directory
+set_here("/Users/minggong/Documents/Tytell_Lab/Project_UpDown")
+
+## Check directory
+getwd()
+here()
+
+## Set the data directory
+datadir <- here("Data", "6_Processed3D")
+
+## Basic variables
 
 fps <- 200
 tailbeatfreq <- 2  # Hz
@@ -51,7 +62,7 @@ ang_mean <- function(angdeg) {
 }
 
 read_data <- function(filename) {
-
+  filename <- here(datadir, filename)
   data <- read_csv(filename, col_names = TRUE)
   
   filedate <- str_extract(filename, '20\\d{6}')
@@ -66,25 +77,27 @@ read_data <- function(filename) {
            trial = trialnum)
 }  
 
+## Get a list of data files in the data directory
+a <- list.files(here(datadir), pattern = "*3dtail.csv")
+b <- list.files(here(datadir), pattern = "*3dtail-cycles.csv")
 
-## Process the data
-a <- list.files(pattern = "*3dtail.csv")
-b <- list.files(pattern = "*3dtail-cycles.csv")
-# remove the useless files in the folder, look up for a function
 
-lateral_angle_csv_files <- list.files(pattern = ".csv", full.names = TRUE, path = "/Users/minggong/Documents/Tytell_Lab/Project2/Data/UpAndDownGoodLateral/angle_vel_data/")
+lateral_angle_csv_files <- list.files(pattern = ".csv", full.names = TRUE, path = here("Data","3_3D_Training" ,"UpAndDownGoodLateral", "angle_vel_data"))
 lateral_angle <- lateral_angle_csv_files %>% map_dfr(~read_csv(.), col_names = TRUE)
 
 alldata <- list()
 
-for (i in seq_along(a[1:52])) {
+
+## Process the data
+# You can use seq_along(a[1:3]) to set the range.
+for (i in seq_along(a)) {
   file1 <- a[i]
   
   basename <- tools::file_path_sans_ext(file1)
   file2 <- paste0(basename, "-cycles.csv")
 
   data <- read_data(file1)
-  cycles <- read_csv(file2)
+  cycles <- read_csv(here(datadir, file2))
   
   print(file1)
   print(file2)
@@ -316,4 +329,9 @@ for (i in seq_along(a[1:52])) {
 }
 
 alldata <- bind_rows(alldata)
-write_csv(alldata, '2022_alldata_5points.csv')
+
+## Set output directory
+outputdir <- here("Data","7_Stats_Analysis", "2022_alldata_5points_test.csv")
+print(outputdir)
+
+write_csv(alldata, outputdir)

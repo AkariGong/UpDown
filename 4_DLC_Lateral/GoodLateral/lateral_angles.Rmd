@@ -4,6 +4,11 @@ output: html_document
 ---
 
 This file is to calculate the angle of fish among upward, forward, and downward swimming based on just the lateral view.
+```{r}
+# Change Knit Directory into Project Directory
+# Then check Working Directory
+getwd()
+```
 
 ```{r library, message=FALSE}
 library(dplyr)
@@ -14,6 +19,14 @@ library(lubridate)
 library(signal)
 library(patchwork)
 library(plotly)
+library(here)
+```
+
+
+```{r}
+# "Users","minggong","Documents","Tytell_Lab","Project2",
+datadir <- here("Data","3_3D_Training", "UpAndDownGoodLateral")
+datadir
 ```
 
 
@@ -21,6 +34,7 @@ library(plotly)
 *START FROM HERE*
 ```{r customize read-in function}
 read_lateral_data <- function(filename) {
+  filename <- here(datadir, filename)
   dlccolnames <- read_csv(filename, col_names = FALSE, skip = 1, n_max = 2)
   
   dlccolnames <- paste(dlccolnames[1,], dlccolnames[2,], sep = '_')
@@ -45,11 +59,11 @@ read_lateral_data <- function(filename) {
 read_lateral_data(test_file)
 
 ```{r}
-all_videos <- 
-  list.files(pattern = "*.csv")
+all_videos <- list.files(path = datadir, pattern = "*.csv")
 all_videos_df <- data.frame(all_videos)
 ```
 
+Row number:
 1:8 20211013_ms03
 9:25 20211014_ms04
 26:36 20211028_ms03
@@ -61,12 +75,13 @@ all_videos_df <- data.frame(all_videos)
 77:88 20220708_ms02
 89:105 20220728_ms06
 106:115 20220729_ms06
-```{r read all data files, message=FALSE, show_col_types = FALSE}
-data <-
-  all_videos[48:56] %>%
-    map_dfr(~read_lateral_data(.)) %>%
-  mutate(date = ymd(date))
 
+```{r read all data files, message=FALSE, show_col_types = FALSE}
+# filter specific date and fish
+data <-
+  all_videos[grepl("20211014_ms04.", all_videos)] %>%
+  map_dfr(~read_lateral_data(.)) %>%
+  mutate(date = ymd(date))
 ```
 
 ```{r}
@@ -76,7 +91,7 @@ data %>% select(date, fish, trial) %>% unique()
 ```{r read in trial_info_v2}
 # trial_info_v2 has the range of frames that include both points and left eye and strip
 
-trial_info_v2 <- read_csv("/Users/minggong/Documents/Tytell_Lab/Project2/Data/Qualitative/trial_info_v2.csv")
+trial_info_v2 <- read_csv("/Users/minggong/Documents/Tytell_Lab/Project_UpDown/Data/Qualitative/trial_info_v2.csv")
 # change date format to year_month_date
 trial_info_v2$date <- as.Date(trial_info_v2$date, format = "%m_%d_%Y")
 trial_info_v2$date <- ymd(trial_info_v2$date)
@@ -273,6 +288,8 @@ datalong %>%
 
 
 ```{r}
+# Some trials have error for the spiny_dorsal_ant_base column.
+# Filter out the column for those trials.
 datalong <- datalong %>% filter(point != "spiny_dorsal_ant_base")
 ```
 
@@ -744,9 +761,13 @@ speed <- speed %>%
 lateral_angle <- left_join(lateral_angle, speed, by = c("ID", "date", "fish", "trial", "frame"))
 ```
 
-```{r}
-# save_csv_path <- "/Users/minggong/Users/minggong/Documents/Tytell_Lab/Project2/Data/UpAndDownGoodLateral/angle_vel_data"
-write_csv(lateral_angle, file = "lateral_angle_20211110_ms05.csv")
+```{r output directory}
+# Remember to change the file name
+output_data_file <- here("Data","3_3D_Training", "UpAndDownGoodLateral", "angle_vel_data", "lateral_angle_20211014_ms04_test.csv")
+output_data_file
+```
 
+```{r save file}
+write_csv(x = lateral_angle, path = output_data_file)
 ```
 

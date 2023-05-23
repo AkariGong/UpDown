@@ -1,7 +1,15 @@
 require(tidyverse)
 require(here)
 require(plotly)
+require(here)
 
+## set data directory; input and output directory are the same
+getwd()
+here()
+
+datadir <- here("Data", "6_Processed3D")
+
+## Basic variables
 fps <- 200
 
 tailbeatfreq <- 2  # Hz
@@ -79,7 +87,7 @@ get_tail_beats <- function(df, var) {
 
 ## Process the data
 
-datafiles <- c('findtailbeat/20220728_ms06_trial19_3dtail.csv')
+datafiles <- here(datadir, "20220728_ms06_trial19_3dtail.csv")
 
 for (file1 in datafiles) {
   data1 <- read_csv(here(file1))
