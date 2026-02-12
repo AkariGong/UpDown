@@ -1,0 +1,272 @@
+---
+title: "R Notebook"
+output: 
+  html_document:
+    keep_md: true
+---
+
+```{r setup, include=FALSE}
+# 设置全局选项
+knitr::opts_chunk$set(
+  warning = FALSE,
+  message = FALSE,
+  cache = TRUE,
+  dev = "png",
+  dev.args = list(type = "cairo-png"),
+  dpi = 300
+)
+
+# 清理环境
+rm(list = ls())
+gc()
+```
+
+```{r load_packages, message=FALSE}
+# 首先加载基础包
+library(tidyverse)  # 包含 ggplot2, dplyr, readr, purrr
+library(lubridate)
+library(lme4)
+library(lmerTest)
+library(MuMIn)
+library(patchwork)
+```
+
+```{r read_data}
+# 使用 try-catch 来处理数据读取
+tryCatch({
+  # 读取数据时添加类型检查
+  data <- read_csv("/Users/minggong/Documents/Tytell_Lab/Project_UpDown/Data/7_Stats_Analysis/2022_alldata_v2.csv",
+                   show_col_types = FALSE,
+                   col_types = cols(
+                     date = col_date(),
+                     fish = col_character()
+                   ))
+  
+  trial_info_v2 <- read_csv("/Users/minggong/Documents/Tytell_Lab/Project_UpDown/Data/Qualitative/trial_info_v2.csv",
+                           show_col_types = FALSE) %>% 
+    select(ID, fish, date, trial, vertical_direction)
+}, error = function(e) {
+  stop("Error reading data files: ", e$message)
+})
+```
+
+```{r process_data}
+# 数据预处理，添加错误处理和数据验证
+tryCatch({
+  # 1. 日期转换
+  trial_info_v2$date <- ymd(trial_info_v2$date)
+  
+  # 2. 数据合并前的验证
+  if(any(is.na(trial_info_v2$date))) {
+    warning("Some dates in trial_info_v2 are NA after conversion")
+  }
+  
+  # 3. 数据合并
+  data <- left_join(data, trial_info_v2, by = c("date", "fish", "trial"))
+  
+  # 4. 过滤和转换
+  data <- data %>% 
+    filter(cyclenum < 6) %>%
+    mutate(phase_diff = phase_diff * -1)
+  
+  # 5. 验证处理后的数据
+  if(any(is.na(data$phase_diff))) {
+    warning("Some phase_diff values are NA after processing")
+  }
+  
+  # 6. 输出数据基本信息
+  print(sprintf("Processed data dimensions: %d rows, %d columns", nrow(data), ncol(data)))
+  
+}, error = function(e) {
+  stop("Error in data processing: ", e$message)
+})
+```
+
+```{r}
+colnames(data)
+```
+
+```{r}
+unique(data$date)
+unique(data$fish)
+```
+
+```{r}
+# Remove the rows if mean_bodyangle_deg is NA
+data <- data %>% dplyr::filter(!is.na(mean_bodyangle_deg))
+```
+
+```{r}
+ggplot(data, aes(x = mean_bodyangle_deg, y = phase_diff, color = fish)) +
+  geom_point(alpha = 0.7) +
+  geom_smooth(method = "lm", aes(group = 1)) +
+  theme_minimal() +
+  labs(x = "Mean body angle (degrees)",
+       y = "Phase difference",
+       color = "Fish")
+ggplot(data, aes(x = mean_bodyangle_deg, y = phase_diff, color = fish)) +
+  geom_point(alpha = 0.7) +
+  stat_smooth(method = "lm", se = FALSE, aes(group = fish)) +
+  theme_minimal() +
+  labs(x = "Mean body angle (degrees)",
+       y = "Phase difference",
+       color = "Fish")
+```
+
+```{r}
+ggplot(data, aes(x = mean_original_angle_deg, y = phase_diff, color = fish)) +
+  geom_point(alpha = 0.7) +
+  geom_smooth(method = "lm", aes(group = 1)) +
+  theme_minimal() +
+  labs(x = "Mean original body angle (degrees)",
+       y = "Phase difference",
+       color = "Fish")
+```
+
+
+```{r}
+# "phase_diff" is modeled as a function of "mean_bodyangle_deg" with random intercepts for each fish
+model_PhaseDiff_MeanAngle <- lmer(phase_diff ~ mean_bodyangle_deg + (1 | fish), data = data)
+summary(model_PhaseDiff_MeanAngle)
+coef(model_PhaseDiff_MeanAngle)
+```
+
+```{r}
+model_PhaseDiff_MeanOriginalAngle <- lmer(phase_diff ~ mean_original_angle_deg + (1 | fish), data = data)
+summary(model_PhaseDiff_MeanOriginalAngle)
+coef(model_PhaseDiff_MeanOriginalAngle)
+```
+
+
+```{r}
+mean_original_angle_deg <- seq(-40,40, by=10)
+fish <- c("ms03", "ms04", "ms05", "ms02", "ms06")
+
+newdata <- tidyr::expand_grid(mean_original_angle_deg, fish)
+
+newdata$phase_diff <- predict(model_PhaseDiff_MeanOriginalAngle, newdata=newdata)
+```
+
+
+```{r}
+ggplot(newdata, aes(x = mean_original_angle_deg, y = phase_diff, color = fish)) +
+  geom_line() +
+  geom_abline(intercept = 7.748e-03, slope = 1.800e-03, color = "black")
+
+```
+
+
+```{r}
+plot(model_PhaseDiff_MeanAngle)
+plot(model_PhaseDiff_MeanOriginalAngle)
+```
+
+
+```{r}
+null_model <- lmer(phase_diff ~ 1 + (1 | fish), data = data)
+anova(model_PhaseDiff_MeanOriginalAngle, null_model)  # Likelihood ratio test
+```
+
+```{r}
+r.squaredGLMM(model_PhaseDiff_MeanOriginalAngle)
+# m: marginal
+# c: conditional
+```
+
+```{r}
+data <- data %>%
+  mutate(mean_angvel_degs = mean_angvel_rads * (180 / pi))
+```
+
+```{r}
+ggplot(data, aes(x = mean_angvel_rads, y = phase_diff, color = vertical_direction)) +
+  geom_point(alpha = 0.7) +
+  geom_smooth(method = "lm", aes(group = 1)) +
+  theme_minimal() +
+  labs(x = "Mean angular velocity (rad/s)",
+       y = "Phase difference",
+       color = "Fish")
+ggplot(data, aes(x = mean_angvel_degs, y = phase_diff, color = vertical_direction)) +
+  geom_point(alpha = 0.7) +
+  geom_smooth(method = "lm", aes(group = 1)) +
+  theme_minimal() +
+  labs(x = "Mean angular velocity (deg/s)",
+       y = "Phase difference",
+       color = "Fish")
+```
+
+```{r}
+model_PhaseDiff_AngVelDegs <- lmer(phase_diff ~ mean_angvel_degs + (1 | fish), data = data)
+summary(model_PhaseDiff_AngVelDegs)
+coef(model_PhaseDiff_AngVelDegs)
+```
+
+```{r}
+model_PhaseDiff_AngVelRads <- lmer(phase_diff ~ mean_angvel_rads + (1 | fish), data = data)
+summary(model_PhaseDiff_AngVelRads)
+coef(model_PhaseDiff_AngVelRads)
+```
+
+```{r}
+mean_angvel_degs <- seq(-40,40, by=10)
+fish <- c("ms03", "ms04", "ms05", "ms02", "ms06")
+
+newdata1 <- tidyr::expand_grid(mean_angvel_degs, fish)
+
+newdata1$phase_diff <- predict(model_PhaseDiff_AngVelDegs, newdata=newdata1)
+```
+
+```{r}
+ggplot(newdata1, aes(x = mean_angvel_degs, y = phase_diff, color = fish)) +
+  geom_line() +
+  geom_abline(intercept = 4.385e-03, slope = -1.111e-03, color = "black")
+```
+
+```{r}
+ggplot(data, aes(x = mean_original_angle_deg, y = mean_angvel_degs)) +
+  geom_point(alpha = 0.7) +
+  geom_smooth(method = "lm", aes(group = 1)) +
+  theme_minimal() +
+  labs(x = "Mean original angle (deg)",
+       y = "Mean angular velocity (deg/s)")
+```
+
+```{r}
+ggplot(data, aes(x = mean_original_angle_deg, fill = vertical_direction)) + 
+  geom_histogram()
+```
+
+```{r}
+ggplot(data, aes(x = mean_angvel_degs, fill = vertical_direction)) + 
+  geom_histogram()
+```
+
+```{r}
+data[which.min(data$mean_original_angle_deg),]
+data[which.min(data$mean_angvel_degs), ]
+```
+
+```{r}
+data[which.max(data$mean_original_angle_deg),]
+data[which.max(data$mean_angvel_degs),]
+```
+
+```{r}
+quantile(data$mean_original_angle_deg, probs = seq(0, 1, 1/3))
+quantile(data$mean_angvel_degs, probs = seq(0, 1, 1/3))
+```
+
+```{r}
+data <- data %>% 
+  mutate(beginning_pitching = case_when(mean_original_angle_deg > 6.08  ~  "PU",
+                                        mean_original_angle_deg > -1.9 & mean_original_angle_deg <= 6.08  ~  "PH",
+                                        mean_original_angle_deg <= -1.9 ~ "PD"),
+         swimming_direction = case_when(mean_angvel_degs > 1.45 ~ "SU",
+                                        mean_angvel_degs > -1.88 & mean_angvel_degs <= 1.45 ~ "SH",
+                                        mean_angvel_degs <= -1.88 ~ "SD"))
+```
+
+```{r}
+View(data)
+```
+
